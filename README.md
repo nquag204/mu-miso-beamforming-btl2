@@ -31,6 +31,7 @@ mu-miso-beamforming-btl2/
 ├── config.py                                  # Cấu hình tập trung mọi tham số hệ thống, kênh & giải thuật
 ├── main.py                                    # Script chính chạy toàn bộ 6 thực nghiệm & xuất 8 hình
 ├── plot_results.py                            # Vẽ lại toàn bộ 8 đồ thị 300 DPI từ dữ liệu đã lưu
+├── verify_reproducibility.py                  # Kiểm chứng tái lập 100% số liệu & đồ thị báo cáo từ con số 0
 ├── run_all.ps1                                # Script PowerShell chạy 1 chạm (pytest -> main.py)
 ├── requirements.txt                           # Thư viện Python cần thiết (Python >= 3.10)
 ├── README.md                                  # Hướng dẫn cài đặt và tái lập mô phỏng (file này)
@@ -132,3 +133,42 @@ Lệnh trên đọc các file `.npz`/`.csv` trong `results/data/` và xuất đ�
 | Hình 5 | `fig5_sumrate_vs_rician_k.png` | `exp5_rician_k_sweep.npz`, `exp5_rician_k_sweep.csv` | Ảnh hưởng của hệ số Rician $K$-factor ($\kappa \in [-20, 15]\,\text{dB}$) |
 | Hình 6 | `fig6_convergence_curves.png` | `exp6_convergence_stability.npz` | Đường cong hội tụ trung bình $\pm 1\sigma$ trên 30 lần chạy độc lập |
 | Hình 7 | `fig7_stability_runtime.png` | `exp6_convergence_stability.npz`, `exp6_stability_runtime.csv` | Boxplot độ ổn định nghiệm và so sánh thời gian tính toán (thang log) |
+
+---
+
+## 5. Kiểm chứng tái lập 100% kết quả báo cáo (Dành cho người chấm / Tester)
+
+Để xác minh độc lập rằng toàn bộ bảng số liệu (**Bảng 2–6**) và **8 đồ thị** trong báo cáo được sinh ra từ mã nguồn thật và có thể tái lập chính xác tuyệt đối từ con số 0 (`seed = 2026`, `100` hiện thực kênh độc lập/điểm, `30` lần chạy ổn định):
+
+### Cách 1: Kiểm chứng tự động bằng 1 lệnh (`verify_reproducibility.py`)
+```powershell
+# (A) Kiểm tra nhanh đủ 28 file kết quả & đối chiếu các mốc số liệu Bảng 3–6 (~1 giây)
+python verify_reproducibility.py --check-only
+
+# (B) Chạy sạch từ con số 0 vào thư mục tạm (100 trials, ~8 phút) và tự động đối chiếu từng bảng CSV
+$env:MPLBACKEND = "Agg"; python verify_reproducibility.py
+
+# (C) Hoặc xóa trắng results/data/* & results/figures/*, chạy tái lập tại chỗ rồi đối chiếu
+$env:MPLBACKEND = "Agg"; python verify_reproducibility.py --in-place
+```
+> **Kết quả kỳ vọng:** Cả 6 bảng CSV in `KHOP 100% (max_diff = 0.00e+00)` (loại trừ cột `runtime_ms` phụ thuộc tải CPU), sinh đủ 12 file dữ liệu và 16 file hình (8 PNG + 8 PDF).
+
+### Cách 2: Tự kiểm chứng thủ công từng bước (Clean-Room Test)
+```powershell
+# 1. Lưu riêng bản results gốc để đối chiếu, sau đó xóa trắng toàn bộ dữ liệu & hình cũ
+Copy-Item -Recurse "results" "..\results_origin"
+Remove-Item "results\data\*", "results\figures\*" -Force
+
+# 2. Chạy lại toàn bộ mô phỏng đầy đủ (KHÔNG thêm --quick để khớp đúng 100 kênh của báo cáo)
+$env:MPLBACKEND = "Agg"; python main.py
+
+# 3. Kiểm tra mốc số liệu Bảng 3–6 và mở 8 hình mới sinh ra để đối chiếu với báo cáo PDF/Word
+python verify_reproducibility.py --check-only
+explorer "results\figures"
+```
+
+### Một số mốc số liệu đối chứng chính trong báo cáo (`seed=2026`, 100 mẫu kênh)
+- **Bảng 3 (`exp2_power_sweep.csv`):** Tại $P_{\max}=20\,\text{dBm}$ → `Struct-DE = 22.68`, `WMMSE = 22.22`, `ZF = 22.31`, `MRT = 8.44 bps/Hz`; tại $P_{\max}=30\,\text{dBm}$ → `Struct-DE = 34.85`, `MRT = 9.13 bps/Hz`.
+- **Bảng 4 (`exp3_antenna_sweep.csv`):** $M = 4 \to 32$ → `Struct-DE: 16.64 → 32.93 bps/Hz`, `Direct-DE: 15.00 → 24.53 bps/Hz`.
+- **Bảng 5 (`exp4_user_sweep.csv`):** $K = 8$ → `ZF = 17.26`, `Struct-DE = 31.44 bps/Hz`; $K = 10$ ($K > M$) → `Struct-DE = 34.15 bps/Hz`.
+- **Bảng 6 (`exp6_stability_runtime.csv`):** Qua 30 lần chạy độc lập, `Struct-DE/PSO/GA` đều đạt `23.654 bps/Hz` (`Std = 0.0000`, `CV = 0.000%`), khớp `SciPy-DE = 23.654 bps/Hz`.
