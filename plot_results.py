@@ -15,6 +15,7 @@ if "MPLBACKEND" not in os.environ:
     os.environ["MPLBACKEND"] = "Agg"
 
 import matplotlib
+import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -387,6 +388,191 @@ def plot_exp6_convergence_and_stability(
     _save_fig(fig, "fig7_stability_runtime", fig_dir, cfg)
 
 
+def plot_system_architecture_diagram(
+    fig_dir: Path = FIGURES_DIR,
+    cfg: ExperimentConfig = DEFAULT_CONFIG,
+) -> None:
+    """Sơ đồ 1: MU-MISO downlink signal chain and metaheuristic optimization loop."""
+    s = cfg.system
+    fig, ax = plt.subplots(figsize=(12.2, 5.1))
+    ax.set_xlim(0, 12.4)
+    ax.set_ylim(0, 5.2)
+    ax.axis("off")
+
+    def draw_box(
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        title: str,
+        body: str,
+        fc: str,
+        ec: str,
+        title_color: str = "#0F2942",
+    ) -> None:
+        box = patches.FancyBboxPatch(
+            (x, y),
+            w,
+            h,
+            boxstyle="round,pad=0.06,rounding_size=0.14",
+            linewidth=1.5,
+            edgecolor=ec,
+            facecolor=fc,
+            zorder=3,
+        )
+        ax.add_patch(box)
+        ax.text(
+            x + w / 2.0,
+            y + h - 0.30,
+            title,
+            ha="center",
+            va="top",
+            fontsize=9.8,
+            fontweight="bold",
+            color=title_color,
+            zorder=4,
+        )
+        ax.text(
+            x + w / 2.0,
+            y + h / 2.0 - 0.16,
+            body,
+            ha="center",
+            va="center",
+            fontsize=8.6,
+            color="#222222",
+            linespacing=1.32,
+            zorder=4,
+        )
+
+    def draw_arrow(x1: float, y1: float, x2: float, y2: float, label: str = "", lx: float = 0.0, ly: float = 0.0, color: str = "#1F4E79", ls: str = "-") -> None:
+        ax.annotate(
+            "",
+            xy=(x2, y2),
+            xytext=(x1, y1),
+            arrowprops=dict(arrowstyle="-|>,head_length=0.55,head_width=0.32", lw=1.6, color=color, linestyle=ls),
+            zorder=5,
+        )
+        if label:
+            ax.text(lx, ly, label, ha="center", va="center", fontsize=8.4, fontweight="bold", color=color, zorder=6)
+
+    # Outer grouping frame: Base Station (BS)
+    bs_frame = patches.FancyBboxPatch(
+        (0.25, 2.55),
+        6.15,
+        2.35,
+        boxstyle="round,pad=0.06,rounding_size=0.16",
+        linewidth=1.3,
+        linestyle="--",
+        edgecolor="#1F4E79",
+        facecolor="#F4F8FC",
+        zorder=1,
+    )
+    ax.add_patch(bs_frame)
+    ax.text(0.45, 4.77, "TRẠM GỐC (BS – M anten ULA, f_c = 3.5 GHz, P_max)", fontsize=9.2, fontweight="bold", color="#1F4E79", va="top")
+
+    # Top row: Signal chain
+    draw_box(
+        0.45, 2.80, 1.80, 1.60,
+        "Nguồn dữ liệu",
+        "K luồng độc lập\ns = [s₁, ..., s_K]ᵀ\nE[s sᴴ] = I_K",
+        fc="#FFFFFF", ec="#1F4E79",
+    )
+    draw_box(
+        2.65, 2.80, 2.05, 1.60,
+        "Bộ tạo búp sóng W",
+        "W = [w₁, ..., w_K] ∈ ℂ^(M×K)\nx = Σ w_k s_k\n||W||_F² = P_max",
+        fc="#E3F0FB", ec="#1F4E79",
+    )
+    draw_box(
+        5.05, 2.80, 1.20, 1.60,
+        "Mảng ULA",
+        "M phần tử\nd_a = λ/2\nSector 120°",
+        fc="#FFFFFF", ec="#1F4E79",
+    )
+    draw_box(
+        6.80, 2.80, 2.45, 1.60,
+        "Kênh truyền Rician H",
+        "d_k ∈ [20, 100] m, α = 3.0\nβ_k = β₀ (d_k / d₀)^(-α)\nh_k = √β_k (LoS + NLoS)",
+        fc="#FFF6E5", ec="#D97706", title_color="#92400E",
+    )
+    draw_box(
+        9.75, 2.80, 2.40, 1.60,
+        "K Người dùng (UE)",
+        "y_k = h_kᴴ w_k s_k + MUI + n_k\nn_k ~ CN(0, σ² = -94 dBm)\nSINR_k → R_sum = Σ log₂(1+SINR_k)",
+        fc="#EAF7EE", ec="#2E7D32", title_color="#1B5E20",
+    )
+
+    draw_arrow(2.25, 3.60, 2.65, 3.60, "s", 2.45, 3.84)
+    draw_arrow(4.70, 3.60, 5.05, 3.60, "x", 4.88, 3.84)
+    draw_arrow(6.25, 3.60, 6.80, 3.60, "Phát", 6.53, 3.86)
+    draw_arrow(9.25, 3.60, 9.75, 3.60, "Hᴴx", 9.50, 3.84)
+
+    # Bottom row: Evolutionary Optimization Engine
+    opt_frame = patches.FancyBboxPatch(
+        (1.65, 0.25),
+        8.65,
+        1.80,
+        boxstyle="round,pad=0.06,rounding_size=0.16",
+        linewidth=1.5,
+        edgecolor="#9B1C1C",
+        facecolor="#FDF2F2",
+        zorder=1,
+    )
+    ax.add_patch(opt_frame)
+    ax.text(1.85, 1.94, "KHỐI TỐI ƯU HÓA BEAMFORMING (HEURISTIC / TIẾN HÓA & ĐỐI CHIẾU)", fontsize=9.2, fontweight="bold", color="#9B1C1C", va="top")
+
+    draw_box(
+        1.90, 0.42, 2.45, 1.22,
+        "1. Mã hóa nghiệm",
+        "• Direct: x ∈ [-1, 1]^(2MK)\n• Struct: z ∈ [-0.05, 1]^(2K)\n  (đối ngẫu p, λ độc lập M)",
+        fc="#FFFFFF", ec="#B91C1C", title_color="#9B1C1C",
+    )
+    draw_box(
+        4.75, 0.42, 2.55, 1.22,
+        "2. Tiến hóa / Bầy đàn",
+        "DE (dither F, CR=0.85)\nPSO (w: 0.9→0.4) | GA (BLX-α)\nChiếu công suất ||W||_F² = P_max",
+        fc="#FFFFFF", ec="#B91C1C", title_color="#9B1C1C",
+    )
+    draw_box(
+        7.70, 0.42, 2.35, 1.22,
+        "3. Đánh giá & Chọn lọc",
+        "Vector hóa NumPy / Gram O(K³)\nmax R_sum(W) qua T_max vòng\nTham chiếu: MRT, ZF, RZF, WMMSE",
+        fc="#FFFFFF", ec="#B91C1C", title_color="#9B1C1C",
+    )
+
+    draw_arrow(4.35, 1.03, 4.75, 1.03, color="#9B1C1C")
+    draw_arrow(7.30, 1.03, 7.70, 1.03, color="#9B1C1C")
+
+    # Feedback CSI H from Channel straight down to Optimizer, and optimal W* straight up to Beamformer
+    ax.annotate(
+        "",
+        xy=(8.02, 2.11),
+        xytext=(8.02, 2.74),
+        arrowprops=dict(arrowstyle="-|>,head_length=0.55,head_width=0.32", lw=1.8, color="#B45309"),
+        zorder=5,
+    )
+    ax.text(8.18, 2.42, "CSI hoàn hảo H", ha="left", va="center", fontsize=8.7, fontweight="bold", color="#B45309")
+
+    ax.annotate(
+        "",
+        xy=(3.68, 2.74),
+        xytext=(3.68, 2.11),
+        arrowprops=dict(arrowstyle="-|>,head_length=0.55,head_width=0.32", lw=1.8, color="#9B1C1C"),
+        zorder=5,
+    )
+    ax.text(3.84, 2.38, "Nghiệm tối ưu W*", ha="left", va="center", fontsize=8.7, fontweight="bold", color="#9B1C1C")
+
+    fig.suptitle(
+        f"Sơ đồ kiến trúc hệ thống MU-MISO đường xuống và vòng lặp tối ưu Beamforming (M={s.default_m}, K={s.default_k})",
+        fontsize=11.5,
+        fontweight="bold",
+        color="#0F2942",
+        y=0.98,
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    _save_fig(fig, "sodo1_system_architecture", fig_dir, cfg)
+
+
 def plot_all_figures(
     data_dir: Path = DATA_DIR,
     fig_dir: Path = FIGURES_DIR,
@@ -396,13 +582,14 @@ def plot_all_figures(
     _configure_matplotlib()
     ensure_dirs(fig_dir)
     print(f"[BTL2] Generating 300-DPI IEEE figures into: {fig_dir}")
+    plot_system_architecture_diagram(fig_dir, cfg)
     plot_exp1_geometry_and_beampattern(data_dir, fig_dir, cfg)
     plot_exp2_power_sweep(data_dir, fig_dir, cfg)
     plot_exp3_antenna_sweep(data_dir, fig_dir, cfg)
     plot_exp4_user_sweep(data_dir, fig_dir, cfg)
     plot_exp5_rician_k_sweep(data_dir, fig_dir, cfg)
     plot_exp6_convergence_and_stability(data_dir, fig_dir, cfg)
-    print("[BTL2] All 7 figures generated successfully.")
+    print("[BTL2] All figures generated successfully.")
 
 
 if __name__ == "__main__":

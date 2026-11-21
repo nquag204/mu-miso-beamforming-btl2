@@ -147,7 +147,7 @@ Báo cáo này trình bày việc xây dựng mô hình toán học, thiết k�
 \section{GIỚI THIỆU BÀI TOÁN}
 Trong các hệ thống thông tin di động băng rộng hiện đại (4G LTE-Advanced, 5G NR và 6G), kỹ thuật ghép kênh phân chia theo không gian (SDMA) tại trạm gốc nhiều anten cho phép phục vụ đồng thời nhiều người dùng đơn anten trên cùng tài nguyên tần số và thời gian \cite{rappaport2002, tse2005}. Cấu trúc đường xuống này tạo thành hệ thống MU-MISO (Multi-User Multiple-Input Single-Output). Mục tiêu cốt lõi của bộ tạo búp sóng tuyến tính (linear precoder / transmit beamformer) là hướng năng lượng sóng vô tuyến tập trung tới từng người dùng đích đồng thời triệt nhiễu đồng kênh liên người dùng (Multi-User Interference -- MUI).
 
-Bài toán tối đa hóa tổng tốc độ bit (Sum-Rate Maximization) dưới ràng buộc tổng công suất phát tại trạm gốc có bản chất không lồi và đã được chứng minh là bài toán NP-hard \cite{shi2011, bjornson2014}. Các kỹ thuật dạng đóng truyền thống như Maximum Ratio Transmission (MRT) \cite{lo1999}, Zero-Forcing (ZF) \cite{spencer2004} và Regularized Zero-Forcing (RZF/MMSE) \cite{peel2005} có độ phức tạp thấp nhưng chưa tối ưu trực tiếp dung lượng tổng trong các điều kiện thực tế (chênh lệch suy hao gần--xa lớn hoặc hệ thống quá tải $K > M$). Thuật toán lặp Weighted MMSE (WMMSE) \cite{shi2011} cải thiện đáng kể hiệu năng nhưng chỉ đảm bảo hội tụ về điểm dừng KKT cục bộ và có tốc độ hội tụ chậm ở vùng SNR cao khi ma trận kênh kém điều kiện.
+Các kỹ thuật tạo búp sóng dạng đóng truyền thống như Maximum Ratio Transmission (MRT) \cite{lo1999}, Zero-Forcing (ZF) \cite{spencer2004} và Regularized Zero-Forcing (RZF/MMSE) \cite{peel2005} có độ phức tạp thấp nhưng chưa tối ưu trực tiếp dung lượng tổng trong các điều kiện thực tế (chênh lệch suy hao gần--xa lớn hoặc hệ thống quá tải $K > M$). Trong khi đó, bài toán tối đa hóa tổng tốc độ bit (Sum-Rate Maximization) dưới ràng buộc tổng công suất phát tại trạm gốc có bản chất không lồi và đã được chứng minh là bài toán NP-hard \cite{shi2011, bjornson2014}. Thuật toán lặp Weighted MMSE (WMMSE) \cite{shi2011} cải thiện đáng kể hiệu năng nhưng chỉ đảm bảo hội tụ về điểm dừng KKT cục bộ và có tốc độ hội tụ chậm ở vùng SNR cao khi ma trận kênh kém điều kiện.
 
 Giải thuật tiến hóa và trí tuệ bầy đàn như Differential Evolution (DE) \cite{storn1997}, Particle Swarm Optimization (PSO) \cite{kennedy1995, shi1998} và Genetic Algorithm (GA) \cite{goldberg1989} mở ra hướng tiếp cận tối ưu toàn cục không cần đạo hàm (derivative-free). Trong báo cáo này, chúng tôi xây dựng toàn diện bài toán MU-MISO trên kênh Rician, thiết kế hai cơ chế mã hóa nghiệm cho DE, PSO, GA, triển khai bằng Python vector hóa (kèm bộ kiểm thử tự động \texttt{pytest} + \texttt{hypothesis} và đối chiếu chéo với \texttt{scipy.optimize.differential\_evolution} \cite{virtanen2020}), và đánh giá định lượng trên nhiều kịch bản Monte-Carlo.
 
@@ -185,6 +185,23 @@ trong đó $\kappa = 10^{K_{\text{dB}}/10}$ là hệ số Rician $K$-factor tuy�
     \bar{\mathbf{h}}_k^{\text{LoS}} = \left[1, \, e^{j\pi\sin\theta_k}, \, \dots, \, e^{j(M-1)\pi\sin\theta_k}\right]^T \in \mathbb{C}^{M \times 1}.
 \end{equation}
 Do $\|\bar{\mathbf{h}}_k^{\text{LoS}}\|_2^2 = M$ và $\mathbb{E}[\|\tilde{\mathbf{h}}_k^{\text{NLoS}}\|_2^2] = M$, mô hình bảo toàn chính xác kỳ vọng công suất kênh $\mathbb{E}[\|\mathbf{h}_k\|_2^2] = M\beta_k$.
+
+\subsection{Sơ đồ kiến trúc hệ thống và Các giả thiết mô hình}
+Luồng xử lý tín hiệu đường xuống kết hợp vòng lặp tối ưu ma trận tạo búp sóng $\mathbf{W}$ bằng giải thuật heuristic/tiến hóa được tóm tắt trong Hình \ref{fig:arch}. Để bài toán mô phỏng rõ ràng và khả tái lập, hệ thống sử dụng 5 giả thiết cơ bản sau:
+\begin{enumerate}
+    \item \textbf{Thông tin trạng thái kênh hoàn hảo (Perfect CSI):} Trạm gốc nắm chính xác ma trận kênh $\mathbf{H}$ trong suốt một khối nhất quán kênh (block-fading) để tính toán ma trận $\mathbf{W}$.
+    \item \textbf{Kênh pha-đinh phẳng (Flat-fading):} Tín hiệu truyền trong băng hẹp (hoặc xét trên từng sóng mang con OFDM), đáp ứng kênh không thay đổi theo tần số trong thời gian một khe truyền dẫn.
+    \item \textbf{Ô mạng đơn tế bào và đồng bộ hoàn hảo:} Không xét nhiễu liên tế bào (inter-cell interference) và giả sử đồng bộ thời gian -- tần số lý tưởng giữa BS và $K$ người dùng.
+    \item \textbf{Điều kiện trường xa và mảng ULA lý tưởng:} Khoảng cách tối thiểu $R_{\min} = 20\,\text{m}$ đảm bảo mô hình sóng phẳng trường xa và tránh suy hao kỳ dị gần trạm gốc; các phần tử anten đặt cách đều $\lambda/2$ không xét tương hỗ điện từ (mutual coupling).
+    \item \textbf{Nguồn phát độc lập và tạp âm AWGN đồng nhất:} Các ký hiệu dữ liệu $s_k$ độc lập có công suất đơn vị ($\mathbb{E}[\mathbf{s}\mathbf{s}^H] = \mathbf{I}_K$) và mọi người dùng chịu tạp âm nhiệt AWGN cùng phương sai $\sigma^2 = -94.0\,\text{dBm}$.
+\end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.98\linewidth]{../results/figures/sodo1_system_architecture.png}
+    \caption{Sơ đồ kiến trúc hệ thống MU-MISO đường xuống và vòng lặp tối ưu Beamforming bằng giải thuật Heuristic/Tiến hóa.}
+    \label{fig:arch}
+\end{figure}
 
 % =========================================================================
 \section{XÂY DỰNG BÀI TOÁN TỐI ƯU HÓA}
@@ -224,7 +241,27 @@ Hàm mục tiêu $R_{\text{sum}}(\mathbf{W})$ có hai tính chất quan trọng 
     \item \textbf{Differential Evolution (DE/current-to-best/1/bin)} \cite{storn1997}: Khởi tạo đều $N_p$ cá thể; mỗi thế hệ tạo vector đột biến $\mathbf{v}_i = \mathbf{x}_i + F_i(\mathbf{x}_{\text{best}} - \mathbf{x}_i) + F_i(\mathbf{x}_{r_1} - \mathbf{x}_{r_2})$ với hệ số dither $F_i \sim \mathcal{U}(0.4, 0.8)$, lai ghép nhị thức xác suất $CR = 0.85$ (luôn chọn tối thiểu 1 tọa độ $j_{\text{rand}}$), kẹp biên và chọn lọc tham lam $\mathbf{x}_i^{(t+1)} = \mathbf{u}_i$ nếu $f(\mathbf{u}_i) \ge f(\mathbf{x}_i^{(t)})$.
     \item \textbf{Particle Swarm Optimization (Global-Best PSO)} \cite{kennedy1995, shi1998}: Cập nhật vận tốc $\mathbf{v}_i^{(t+1)} = w(t)\mathbf{v}_i^{(t)} + c_1 \mathbf{r}_1 \odot (\mathbf{p}_{i,\text{best}} - \mathbf{x}_i^{(t)}) + c_2 \mathbf{r}_2 \odot (\mathbf{g}_{\text{best}} - \mathbf{x}_i^{(t)})$ với trọng số quán tính giảm tuyến tính $w(t): 0.9 \to 0.4$, $c_1 = 1.5, c_2 = 1.8$, kẹp vận tốc $v_{\max} = 0.25 \cdot \text{span}$ và phản xạ tắt dần tại biên.
     \item \textbf{Real-Coded Genetic Algorithm (GA)} \cite{goldberg1989}: Kết hợp chọn lọc đấu loại (Tournament cỡ 3), lai ghép pha trộn BLX-$\alpha$ ($\alpha = 0.3$, $p_c = 0.9$), đột biến Gaussian độ lệch chuẩn giảm tuyến tính ($p_m = 0.12$) và giữ lại 2 cá thể ưu tú (Elitism) nhằm đảm bảo đường cong hội tụ đơn điệu không giảm.
+    \item \textbf{Điều kiện dừng và đối chiếu mã nguồn mở:} Mỗi giải thuật dừng khi đạt số thế hệ tối đa $T_{\max} = 250$ với kích thước quần thể $N_p = 50$ ($12.550$ đánh giá) cho biểu diễn trực tiếp $2MK$ chiều, và $T_{\max} = 100$ với $N_p = 36$ ($3.636$ đánh giá) cho biểu diễn cấu trúc $2K$ chiều (đồng thời hỗ trợ cơ chế dừng sớm theo ngưỡng cải thiện $\Delta R < 10^{-6}$ nếu kích hoạt trong \texttt{config.py}). Kết quả \texttt{Struct-DE} được đối chiếu chéo trực tiếp với \texttt{scipy.optimize.differential\_evolution} \cite{virtanen2020} trong bộ kiểm thử tự động.
 \end{itemize}
+
+\begin{table}[H]
+    \centering
+    \caption{Tóm tắt quy trình thực thi giải thuật Differential Evolution (\texttt{Direct-DE} / \texttt{Struct-DE})}
+    \label{tab:algo_de}
+    \renewcommand{\arraystretch}{1.18}
+    \begin{tabularx}{\textwidth}{l X}
+        \toprule
+        \textbf{Bước} & \textbf{Thao tác trong vòng lặp tiến hóa} \\
+        \midrule
+        \textbf{Đầu vào} & Ma trận kênh $\mathbf{H} \in \mathbb{C}^{M\times K}$, $P_{\max}$, $\sigma^2$, cỡ quần thể $N_p$, số vòng lặp $T_{\max}$, $F \in [0.4, 0.8]$, $CR = 0.85$. \\
+        \textbf{1. Khởi tạo} & Sinh ngẫu nhiên đều $N_p$ cá thể $\mathbf{x}_i^{(0)}$ trong $[-1,1]^{2MK}$ (\texttt{Direct}) hoặc $[-0.05, 1.0]^{2K}$ (\texttt{Struct}); tiền tính ma trận Gram $\mathbf{G}_H = \tilde{\mathbf{H}}^H\tilde{\mathbf{H}}$ nếu dùng \texttt{Struct}. \\
+        \textbf{2. Đánh giá đầu} & Chiếu ràng buộc công suất ($\|\mathbf{W}\|_F^2 = P_{\max}$ hoặc $\sum p_k = \sum \lambda_k = P_{\max}$), tính $R_{\text{sum}}$ cho toàn quần thể theo lô và lưu $\mathbf{x}_{\text{best}}$. \\
+        \textbf{3. Đột biến \& Lai} & Với mỗi $t = 1 \dots T_{\max}$: tạo $\mathbf{v}_i = \mathbf{x}_i + F_i(\mathbf{x}_{\text{best}} - \mathbf{x}_i) + F_i(\mathbf{x}_{r_1} - \mathbf{x}_{r_2})$, kẹp biên hộp và lai ghép nhị thức theo xác suất $CR$ (đảm bảo tối thiểu một tọa độ $j_{\text{rand}}$) thu được $\mathbf{u}_i$. \\
+        \textbf{4. Chọn lọc} & Chuẩn hóa công suất và đánh giá lô $R_{\text{sum}}(\mathbf{u}_i)$; cập nhật $\mathbf{x}_i^{(t)} = \mathbf{u}_i$ nếu $R_{\text{sum}}(\mathbf{u}_i) \ge R_{\text{sum}}(\mathbf{x}_i^{(t-1)})$, ngược lại giữ $\mathbf{x}_i^{(t-1)}$ và cập nhật $\mathbf{x}_{\text{best}}$. \\
+        \textbf{5. Dừng \& Xuất} & Dừng khi $t = T_{\max}$; giải mã $\mathbf{x}_{\text{best}}$ thành ma trận $\mathbf{W}^* \in \mathbb{C}^{M \times K}$ thỏa mãn $\|\mathbf{W}^*\|_F^2 = P_{\max}$ và trả về đường cong hội tụ. \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
 
 \subsection{Các phương pháp tham chiếu (Baselines)}
 Hiệu năng các giải thuật tiến hóa được đối chiếu trên cùng tập kênh với 4 phương pháp kinh điển:
@@ -236,6 +273,15 @@ Hiệu năng các giải thuật tiến hóa được đối chiếu trên cùng
 % =========================================================================
 \section{THIẾT LẬP MÔ PHỎNG VÀ KIỂM THỬ}
 Toàn bộ mã nguồn được xây dựng bằng Python với cấu trúc module tách biệt (\texttt{config.py}, \texttt{src/channel.py}, \texttt{src/metrics.py}, \texttt{src/baselines.py}, \texttt{src/optimizers.py}, \texttt{src/experiments.py}), vector hóa hoàn toàn bằng NumPy/SciPy và kiểm chứng tự động bằng bộ 21 kịch bản \texttt{pytest} + \texttt{hypothesis} (kiểm tra thống kê kênh Rician $\mathbb{E}[\|\mathbf{h}_k\|_2^2] \approx M\beta_k$, ràng buộc công suất $\|\mathbf{W}\|_F^2 \le P_{\max}$, tính bất biến pha, triệt nhiễu ZF $< 10^{-10}$, tính đơn điệu hội tụ và đối chiếu chéo với \texttt{scipy.optimize.differential\_evolution} \cite{virtanen2020}).
+
+\subsection{Căn cứ lựa chọn tham số, giải thuật và tiêu chí đánh giá}
+\begin{itemize}
+    \item \textbf{Lựa chọn tham số hệ thống và kênh truyền:} Tần số $f_c = 3.5\,\text{GHz}$ và băng thông $B = 10\,\text{MHz}$ đại diện cho mạng 5G NR n78 microcell đô thị; công suất tạp âm $\sigma^2 = -174 + 10\log_{10}(10^7) + 10 = -94.0\,\text{dBm}$ kết hợp suy hao Log-distance ($\alpha = 3.0$, $d_k \in [20, 100]\,\text{m}$) giúp dải $P_{\max} \in [0, 30]\,\text{dBm}$ bao phủ trọn vẹn từ miền công suất thấp đến miền giới hạn nhiễu cao. Góc sector $120^\circ$ phù hợp kiến trúc 3 sector thực tế và tránh đối xứng gương trước--sau của mảng ULA; số mẫu $100$ kênh độc lập (với hạt giống cố định \texttt{seed=2026}) và $30$ lần chạy lặp đảm bảo đường cong trung bình mượt và đánh giá được độ phân tán thống kê.
+    \item \textbf{Lựa chọn giải thuật tối ưu:} \texttt{DE} được chọn làm giải thuật chủ đạo vì hoạt động vượt trội trên không gian thực liên tục, ít siêu tham số nhạy cảm và toán tử đột biến vi sai thích nghi tự động theo cấu trúc địa hình hàm mục tiêu. Nhóm đồng thời triển khai \texttt{PSO} (đại diện trí tuệ bầy đàn) và \texttt{GA} (đại diện tiến hóa kinh điển) cùng hai cơ chế biểu diễn (\texttt{Direct} $2MK$ và \texttt{Struct} $2K$) để chứng minh định lượng lợi ích của việc kết hợp tri thức vật lý vào giải thuật heuristic, đồng thời đối chiếu với 4 phương pháp tham chiếu (\texttt{MRT}, \texttt{ZF}, \texttt{RZF}, \texttt{WMMSE}) và \texttt{SciPy-DE}.
+    \item \textbf{Lựa chọn tiêu chí đánh giá:} Hiệu năng hệ thống được đánh giá toàn diện theo 4 trục: (1) \emph{Tổng tốc độ bit trung bình} [bps/Hz] đo hiệu quả phổ trung bình trên nhiều hiện thực kênh; (2) \emph{Đường cong hội tụ trung bình $\pm 1\sigma$} theo số thế hệ đo tốc độ tiến hóa; (3) \emph{Độ lệch chuẩn (Std) và hệ số biến thiên (CV \%)} qua 30 lần chạy độc lập đo độ ổn định của giải thuật ngẫu nhiên; và (4) \emph{Thời gian thực thi trung bình (ms) cùng số lần đánh giá hàm mục tiêu} đo chi phí tính toán thực tế.
+\end{itemize}
+
+\subsection{Bảng tổng hợp tham số mô phỏng}
 
 \begin{table}[H]
     \centering
