@@ -137,21 +137,26 @@ def rzf_beamformer(
 ) -> BaselineResult:
     """Regularized Zero-Forcing (RZF / MMSE) precoder (Peel et al., 2005).
 
-    V = H (H^H H + (K * sigma^2 / P_max) * I_K)^{-1}, normalized to ||W||_F^2 = P_max.
-    Automatically interpolates between MRT at low SNR and ZF at high SNR.
+    V = H (H^H H + (K * sigma^2 / P_max) * I_K)^{-1} with unit-norm columns and
+    equal per-user power allocation P_max / K (consistent with MRT and ZF under
+    heterogeneous path losses). Smoothly interpolates between MRT (low SNR) and
+    ZF (high SNR).
     """
     t0 = time.perf_counter()
     H_arr = np.asarray(H, dtype=np.complex128)
     _, K = H_arr.shape
 
-    # Normalize H by sqrt(sigma^2) for numerical conditioning across extreme path losses
+    # Normalize H by sqrt(sigma^2) for numerical conditioning across wide path-loss ranges
     H_tilde = H_arr / np.sqrt(noise_power_watt)
     gram = H_tilde.conj().T @ H_tilde
     reg = K / p_max_watt
     reg_mat = gram + reg * np.eye(K, dtype=np.complex128)
     # Solve (gram + reg*I) X = H_tilde^H => V = X^H = H_tilde (gram + reg*I)^{-1}
     V = np.linalg.solve(reg_mat, H_tilde.conj().T).conj().T
-    W = normalize_power(V, p_max_watt)
+    col_norms = np.linalg.norm(V, axis=0, keepdims=True)
+    col_norms = np.maximum(col_norms, EPS)
+    W = (V / col_norms) * np.sqrt(p_max_watt / K)
+    W = normalize_power(W, p_max_watt)
 
     rate = float(compute_sum_rate(H_arr, W, noise_power_watt))
     elapsed = time.perf_counter() - t0
@@ -176,6 +181,8 @@ def wmmse_beamformer(
     Solves sum-rate maximization to a KKT stationary point by alternating
     closed-form updates for receive scalars u_k, MSE weights rho_k, and
     Lagrange-constrained transmit beamformers W(mu) = (A + mu*I)^{-1} B.
+    Initialized at the best of {MRT, ZF, RZF} so monotonic ascent strictly
+    dominates all linear baselines even under strong near-far path-loss spread.
     """
     t0 = time.perf_counter()
     H_arr = np.asarray(H, dtype=np.complex128)
@@ -184,8 +191,13 @@ def wmmse_beamformer(
     # Scale channel by 1/sqrt(sigma^2) so effective noise variance is 1.0
     H_tilde = H_arr / np.sqrt(noise_power_watt)
 
-    # Initialize at RZF (feasible ||W||_F^2 = P_max)
-    W = rzf_beamformer(H_arr, p_max_watt, noise_power_watt).W
+    # Warm-start at the strongest feasible linear baseline
+    init_candidates = (
+        mrt_beamformer(H_arr, p_max_watt, noise_power_watt),
+        zf_beamformer(H_arr, p_max_watt, noise_power_watt),
+        rzf_beamformer(H_arr, p_max_watt, noise_power_watt),
+    )
+    W = max(init_candidates, key=lambda res: res.sum_rate).W
     prev_rate = float(compute_sum_rate(H_tilde, W, 1.0))
     history: list[float] = [prev_rate]
 

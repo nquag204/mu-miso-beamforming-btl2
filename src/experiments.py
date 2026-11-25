@@ -1,13 +1,14 @@
-"""Monte-Carlo experiment orchestrators for BTL2 Topic 1 (MU-MISO Beamforming).
+"""Monte-Carlo experiment orchestrators for BTL2 Topic 1 (MU-MISO Beamforming via GA).
 
-Runs six reproducible experiments and persists raw Monte-Carlo arrays (.npz)
-plus summary CSV tables (.csv) to btl2/results/data/:
-  1. exp1_geometry_beampattern     : Coverage sector geometry & ULA beampatterns
+Runs six reproducible experiments on the polar-coordinate circular cell and
+direct-sum Rician channel model, persisting raw Monte-Carlo arrays (.npz) and
+summary CSV tables (.csv) to btl2/results/data/:
+  1. exp1_geometry_beampattern     : Polar circular deployment & 360-deg beampattern
   2. exp2_power_sweep              : Average sum-rate vs. BS transmit power P_max
-  3. exp3_antenna_sweep            : Average sum-rate vs. BS antenna count M
-  4. exp4_user_sweep               : Average sum-rate vs. user count K (incl. K > M)
+  3. exp3_antenna_sweep            : Average sum-rate vs. BS antenna count N_t
+  4. exp4_user_sweep               : Average sum-rate vs. user count K (incl. K > N_t)
   5. exp5_rician_k_sweep           : Average sum-rate vs. Rician K-factor
-  6. exp6_convergence_stability    : Convergence curves, 30-run stability & runtime
+  6. exp6_convergence_stability    : GA convergence curves, 30-run stability & runtime
 """
 
 from __future__ import annotations
@@ -28,15 +29,11 @@ from src.baselines import (
 from src.channel import generate_rician_channel
 from src.metrics import compute_beampattern
 from src.optimizers import (
-    direct_de_beamformer,
     direct_ga_beamformer,
-    direct_pso_beamformer,
-    scipy_de_beamformer,
-    struct_de_beamformer,
+    hybrid_ga_beamformer,
     struct_ga_beamformer,
-    struct_pso_beamformer,
 )
-from src.utils import dbm_to_watt, ensure_dirs, linear_to_db
+from src.utils import dbm_to_watt, ensure_dirs
 
 
 ALL_METHODS: tuple[str, ...] = (
@@ -44,11 +41,8 @@ ALL_METHODS: tuple[str, ...] = (
     "ZF",
     "RZF",
     "WMMSE",
-    "Direct-DE",
-    "Direct-PSO",
     "Direct-GA",
-    "Struct-DE",
-    "Struct-PSO",
+    "Hybrid-GA",
     "Struct-GA",
 )
 
@@ -60,11 +54,10 @@ def _evaluate_all_methods_on_channel(
     cfg: ExperimentConfig,
     rng: np.random.Generator,
 ) -> tuple[dict[str, float], dict[str, float]]:
-    """Run all baselines & metaheuristics on one paired channel realization."""
+    """Run all baselines & GA variants on one paired channel realization."""
     rates: dict[str, float] = {}
     times: dict[str, float] = {}
 
-    # Deterministic closed-form / iterative baselines
     for name, fn in (
         ("MRT", mrt_beamformer),
         ("ZF", zf_beamformer),
@@ -84,26 +77,22 @@ def _evaluate_all_methods_on_channel(
     rates["WMMSE"] = res_wmmse.sum_rate
     times["WMMSE"] = res_wmmse.runtime_sec
 
-    # Metaheuristics with independent spawned child generators
-    child_seeds = rng.integers(0, 2**31 - 1, size=6)
-    opt_solvers = (
-        ("Direct-DE", direct_de_beamformer),
-        ("Direct-PSO", direct_pso_beamformer),
+    child_seeds = rng.integers(0, 2**31 - 1, size=3)
+    ga_solvers = (
         ("Direct-GA", direct_ga_beamformer),
-        ("Struct-DE", struct_de_beamformer),
-        ("Struct-PSO", struct_pso_beamformer),
+        ("Hybrid-GA", hybrid_ga_beamformer),
         ("Struct-GA", struct_ga_beamformer),
     )
-    for (name, solver_fn), c_seed in zip(opt_solvers, child_seeds):
-        res_opt = solver_fn(
+    for (name, solver_fn), c_seed in zip(ga_solvers, child_seeds):
+        res_ga = solver_fn(
             H,
             p_max_watt,
             noise_watt,
             cfg.optimizer,
             np.random.default_rng(int(c_seed)),
         )
-        rates[name] = res_opt.best_sum_rate
-        times[name] = res_opt.runtime_sec
+        rates[name] = res_ga.best_sum_rate
+        times[name] = res_ga.runtime_sec
 
     return rates, times
 
@@ -128,18 +117,17 @@ def _run_sweep(
     rng = np.random.default_rng(cfg.seed + seed_offset)
 
     for idx, x_val in enumerate(tqdm(x_values, desc=desc, unit="pt")):
-        M, K, p_max_dbm, rician_k_db = channel_params_fn(x_val)
+        Nt, K, p_max_dbm, rician_k_db = channel_params_fn(x_val)
         p_max_watt = float(dbm_to_watt(p_max_dbm))
         noise_watt = cfg.system.noise_power_watt
 
         for t in range(n_trials):
-            ch = generate_rician_channel(M, K, cfg.system, rng, rician_k_db=rician_k_db)
+            ch = generate_rician_channel(Nt, K, cfg.system, rng, rician_k_db=rician_k_db)
             rates, times = _evaluate_all_methods_on_channel(ch.H, p_max_watt, noise_watt, cfg, rng)
             for m in ALL_METHODS:
                 raw_rates[m][idx, t] = rates[m]
                 raw_times[m][idx, t] = times[m]
 
-    # Save raw Monte-Carlo arrays to .npz
     npz_payload: dict[str, np.ndarray] = {
         "x_values": np.asarray(x_values, dtype=np.float64),
         "methods": np.asarray(ALL_METHODS),
@@ -151,7 +139,6 @@ def _run_sweep(
 
     np.savez_compressed(data_dir / f"{out_stem}.npz", **npz_payload)
 
-    # Build tidy summary CSV (mean & std sum-rate + mean runtime ms)
     rows = []
     for idx, x_val in enumerate(x_values):
         row: dict[str, float] = {x_label: float(x_val)}
@@ -170,68 +157,70 @@ def run_exp1_geometry_and_beampattern(
     cfg: ExperimentConfig = DEFAULT_CONFIG,
     data_dir: Path = DATA_DIR,
 ) -> pd.DataFrame:
-    """Exp 1: Representative spatial deployment and ULA angular beampattern."""
+    """Exp 1: Representative polar circular deployment and 360-deg ULA beampattern."""
     ensure_dirs(data_dir)
     sys_cfg = cfg.system
-    M, K = sys_cfg.default_m, sys_cfg.default_k
+    Nt, K = sys_cfg.default_nt, sys_cfg.default_k
     p_max_watt = float(dbm_to_watt(sys_cfg.default_p_max_dbm))
     noise_watt = sys_cfg.noise_power_watt
 
-    # Pick a well-separated deterministic realization for clear beampattern illustration
+    # Pick a clean well-separated polar realization for clear illustration
     rng = np.random.default_rng(cfg.seed + 101)
     best_ch = None
-    best_min_sep = -1.0
-    for _ in range(30):
-        cand = generate_rician_channel(M, K, sys_cfg, rng)
+    best_score = -1.0
+    for _ in range(40):
+        cand = generate_rician_channel(Nt, K, sys_cfg, rng)
+        if np.min(cand.radii_m) < 15.0:
+            continue
         sorted_ang = np.sort(cand.angles_rad)
-        min_sep = float(np.min(np.diff(sorted_ang)))
-        if min_sep > best_min_sep:
-            best_min_sep = min_sep
+        diffs = np.diff(np.append(sorted_ang, sorted_ang[0] + 2.0 * np.pi))
+        min_sep = float(np.min(diffs))
+        if min_sep > best_score:
+            best_score = min_sep
             best_ch = cand
 
     assert best_ch is not None
-    # Sort users by angle for clean legend ordering
     order = np.argsort(best_ch.angles_rad)
     H = best_ch.H[:, order]
+    radii_m = best_ch.radii_m[order]
     distances_m = best_ch.distances_m[order]
     angles_rad = best_ch.angles_rad[order]
     positions_xy = best_ch.positions_xy[order]
-    beta = best_ch.beta[order]
+    pl_db = best_ch.pl_db[order]
 
     res_mrt = mrt_beamformer(H, p_max_watt, noise_watt)
     res_wmmse = wmmse_beamformer(H, p_max_watt, noise_watt, cfg.optimizer.wmmse_max_iter, cfg.optimizer.wmmse_tol)
-    res_sde = struct_de_beamformer(H, p_max_watt, noise_watt, cfg.optimizer, np.random.default_rng(cfg.seed + 102))
+    res_sga = struct_ga_beamformer(H, p_max_watt, noise_watt, cfg.optimizer, np.random.default_rng(cfg.seed + 102))
 
-    angles_grid_deg = np.linspace(-90.0, 90.0, 721)
-    angles_grid_rad = np.deg2rad(angles_grid_deg)
-
+    angles_grid_rad = np.linspace(0.0, 2.0 * np.pi, 721)
     pat_mrt = compute_beampattern(res_mrt.W, angles_grid_rad)
-    pat_sde = compute_beampattern(res_sde.W, angles_grid_rad)
+    pat_sga = compute_beampattern(res_sga.W, angles_grid_rad)
     pat_wmmse = compute_beampattern(res_wmmse.W, angles_grid_rad)
 
     np.savez_compressed(
         data_dir / "exp1_geometry_beampattern.npz",
+        radii_m=radii_m,
         distances_m=distances_m,
         angles_rad=angles_rad,
         positions_xy=positions_xy,
-        beta=beta,
-        angles_grid_deg=angles_grid_deg,
+        pl_db=pl_db,
+        angles_grid_rad=angles_grid_rad,
         pat_mrt=pat_mrt,
-        pat_sde=pat_sde,
+        pat_sga=pat_sga,
         pat_wmmse=pat_wmmse,
         rate_mrt=np.array([res_mrt.sum_rate]),
-        rate_sde=np.array([res_sde.best_sum_rate]),
+        rate_sga=np.array([res_sga.best_sum_rate]),
         rate_wmmse=np.array([res_wmmse.sum_rate]),
     )
 
     df = pd.DataFrame(
         {
             "UE": [f"UE {k + 1}" for k in range(K)],
+            "r_m": radii_m,
+            "Phi_deg": np.rad2deg(angles_rad),
             "x_m": positions_xy[:, 0],
             "y_m": positions_xy[:, 1],
-            "distance_m": distances_m,
-            "azimuth_deg": np.rad2deg(angles_rad),
-            "path_loss_dB": -linear_to_db(beta),
+            "PL_dB": pl_db,
         }
     )
     df.to_csv(data_dir / "exp1_ue_table.csv", index=False, float_format="%.4f")
@@ -242,13 +231,13 @@ def run_exp2_power_sweep(
     cfg: ExperimentConfig = DEFAULT_CONFIG,
     data_dir: Path = DATA_DIR,
 ) -> pd.DataFrame:
-    """Exp 2: Average sum-rate vs. total BS transmit power P_max (dBm)."""
+    """Exp 2: Average sum-rate vs. BS transmit power P_max (dBm)."""
     ensure_dirs(data_dir)
     s = cfg.system
     return _run_sweep(
         x_label="P_max_dBm",
         x_values=list(cfg.p_max_dbm_grid),
-        channel_params_fn=lambda p_dbm: (s.default_m, s.default_k, float(p_dbm), s.rician_k_db),
+        channel_params_fn=lambda p_dbm: (s.default_nt, s.default_k, float(p_dbm), s.rician_k_db),
         cfg=cfg,
         seed_offset=2000,
         desc="Exp 2: P_max sweep",
@@ -261,16 +250,16 @@ def run_exp3_antenna_sweep(
     cfg: ExperimentConfig = DEFAULT_CONFIG,
     data_dir: Path = DATA_DIR,
 ) -> pd.DataFrame:
-    """Exp 3: Average sum-rate vs. number of BS antennas M."""
+    """Exp 3: Average sum-rate vs. number of BS antennas N_t."""
     ensure_dirs(data_dir)
     s = cfg.system
     return _run_sweep(
-        x_label="M_antennas",
-        x_values=list(cfg.m_grid),
-        channel_params_fn=lambda m_val: (int(m_val), s.default_k, s.default_p_max_dbm, s.rician_k_db),
+        x_label="Nt_antennas",
+        x_values=list(cfg.nt_grid),
+        channel_params_fn=lambda nt_val: (int(nt_val), s.default_k, s.default_p_max_dbm, s.rician_k_db),
         cfg=cfg,
         seed_offset=3000,
-        desc="Exp 3: M antenna sweep",
+        desc="Exp 3: N_t antenna sweep",
         out_stem="exp3_antenna_sweep",
         data_dir=data_dir,
     )
@@ -286,7 +275,7 @@ def run_exp4_user_sweep(
     return _run_sweep(
         x_label="K_users",
         x_values=list(cfg.k_grid),
-        channel_params_fn=lambda k_val: (s.default_m, int(k_val), s.default_p_max_dbm, s.rician_k_db),
+        channel_params_fn=lambda k_val: (s.default_nt, int(k_val), s.default_p_max_dbm, s.rician_k_db),
         cfg=cfg,
         seed_offset=4000,
         desc="Exp 4: K user sweep",
@@ -299,13 +288,13 @@ def run_exp5_rician_k_sweep(
     cfg: ExperimentConfig = DEFAULT_CONFIG,
     data_dir: Path = DATA_DIR,
 ) -> pd.DataFrame:
-    """Exp 5: Impact of Rician K-factor (Rayleigh NLoS -> strong LoS)."""
+    """Exp 5: Impact of Rician K-factor in the direct-sum channel model."""
     ensure_dirs(data_dir)
     s = cfg.system
     return _run_sweep(
         x_label="Rician_K_dB",
         x_values=list(cfg.rician_k_db_grid),
-        channel_params_fn=lambda k_db: (s.default_m, s.default_k, s.default_p_max_dbm, float(k_db)),
+        channel_params_fn=lambda k_db: (s.default_nt, s.default_k, s.default_p_max_dbm, float(k_db)),
         cfg=cfg,
         seed_offset=5000,
         desc="Exp 5: Rician K sweep",
@@ -318,23 +307,21 @@ def run_exp6_convergence_stability_runtime(
     cfg: ExperimentConfig = DEFAULT_CONFIG,
     data_dir: Path = DATA_DIR,
 ) -> pd.DataFrame:
-    """Exp 6: Convergence envelopes, multi-run stability (30 seeds), and runtime benchmark."""
+    """Exp 6: GA convergence envelopes, 30-run stability analysis, and runtime benchmark."""
     ensure_dirs(data_dir)
     s = cfg.system
-    M, K = s.default_m, s.default_k
+    Nt, K = s.default_nt, s.default_k
     p_max_watt = float(dbm_to_watt(s.default_p_max_dbm))
     noise_watt = s.noise_power_watt
 
-    ch = generate_rician_channel(M, K, s, np.random.default_rng(cfg.seed + 6000))
+    ch = generate_rician_channel(Nt, K, s, np.random.default_rng(cfg.seed + 6000))
     H = ch.H
 
-    # Baselines on this fixed channel
     res_mrt = mrt_beamformer(H, p_max_watt, noise_watt)
     res_zf = zf_beamformer(H, p_max_watt, noise_watt)
     res_rzf = rzf_beamformer(H, p_max_watt, noise_watt)
     res_wmmse = wmmse_beamformer(H, p_max_watt, noise_watt, cfg.optimizer.wmmse_max_iter, cfg.optimizer.wmmse_tol)
 
-    # Average baseline timings over 100 calls for reliable microsecond/millisecond precision
     base_times_ms: dict[str, float] = {}
     for b_name, b_call in (
         ("MRT", lambda: mrt_beamformer(H, p_max_watt, noise_watt)),
@@ -353,11 +340,8 @@ def run_exp6_convergence_stability_runtime(
     struct_iters = cfg.optimizer.struct_max_iter
 
     histories: dict[str, np.ndarray] = {
-        "Direct-DE": np.zeros((n_runs, direct_iters + 1), dtype=np.float64),
-        "Direct-PSO": np.zeros((n_runs, direct_iters + 1), dtype=np.float64),
         "Direct-GA": np.zeros((n_runs, direct_iters + 1), dtype=np.float64),
-        "Struct-DE": np.zeros((n_runs, struct_iters + 1), dtype=np.float64),
-        "Struct-PSO": np.zeros((n_runs, struct_iters + 1), dtype=np.float64),
+        "Hybrid-GA": np.zeros((n_runs, direct_iters + 1), dtype=np.float64),
         "Struct-GA": np.zeros((n_runs, struct_iters + 1), dtype=np.float64),
     }
     final_rates: dict[str, np.ndarray] = {name: np.zeros(n_runs, dtype=np.float64) for name in histories}
@@ -365,15 +349,12 @@ def run_exp6_convergence_stability_runtime(
     n_evals_map: dict[str, int] = {}
 
     solver_specs = (
-        ("Direct-DE", direct_de_beamformer),
-        ("Direct-PSO", direct_pso_beamformer),
         ("Direct-GA", direct_ga_beamformer),
-        ("Struct-DE", struct_de_beamformer),
-        ("Struct-PSO", struct_pso_beamformer),
+        ("Hybrid-GA", hybrid_ga_beamformer),
         ("Struct-GA", struct_ga_beamformer),
     )
 
-    for run_idx in tqdm(range(n_runs), desc="Exp 6: Convergence & stability", unit="run"):
+    for run_idx in tqdm(range(n_runs), desc="Exp 6: GA convergence & stability", unit="run"):
         for s_idx, (name, solver_fn) in enumerate(solver_specs):
             run_rng = np.random.default_rng(cfg.seed + 6100 + run_idx * 17 + s_idx)
             res = solver_fn(H, p_max_watt, noise_watt, cfg.optimizer, run_rng)
@@ -382,24 +363,12 @@ def run_exp6_convergence_stability_runtime(
             runtimes_ms[name][run_idx] = res.runtime_sec * 1e3
             n_evals_map[name] = res.n_evals
 
-    # SciPy open-source DE cross-check on the same channel (5 independent seeds)
-    scipy_rates = []
-    scipy_times_ms = []
-    scipy_evals = []
-    for r in range(5):
-        res_sp = scipy_de_beamformer(H, p_max_watt, noise_watt, seed=cfg.seed + 6900 + r, encoding="struct")
-        scipy_rates.append(res_sp.best_sum_rate)
-        scipy_times_ms.append(res_sp.runtime_sec * 1e3)
-        scipy_evals.append(res_sp.n_evals)
-
     npz_out: dict[str, np.ndarray] = {
         "mrt_rate": np.array([res_mrt.sum_rate]),
         "zf_rate": np.array([res_zf.sum_rate]),
         "rzf_rate": np.array([res_rzf.sum_rate]),
         "wmmse_rate": np.array([res_wmmse.sum_rate]),
         "wmmse_history": res_wmmse.history,
-        "scipy_de_rates": np.asarray(scipy_rates, dtype=np.float64),
-        "scipy_de_times_ms": np.asarray(scipy_times_ms, dtype=np.float64),
     }
     for name in histories:
         key = name.replace("-", "_")
@@ -409,7 +378,6 @@ def run_exp6_convergence_stability_runtime(
 
     np.savez_compressed(data_dir / "exp6_convergence_stability.npz", **npz_out)
 
-    # Summary statistics table
     summary_rows = [
         {
             "Method": "MRT",
@@ -461,7 +429,7 @@ def run_exp6_convergence_stability_runtime(
         vals = final_rates[name]
         mean_v = float(np.mean(vals))
         std_v = float(np.std(vals, ddof=1)) if n_runs > 1 else 0.0
-        dim = 2 * M * K if name.startswith("Direct") else 2 * K
+        dim = 2 * Nt * K if name in ("Direct-GA", "Hybrid-GA") else 2 * K
         summary_rows.append(
             {
                 "Method": name,
@@ -476,22 +444,6 @@ def run_exp6_convergence_stability_runtime(
             }
         )
 
-    sp_mean = float(np.mean(scipy_rates))
-    sp_std = float(np.std(scipy_rates, ddof=1)) if len(scipy_rates) > 1 else 0.0
-    summary_rows.append(
-        {
-            "Method": "SciPy-DE (Struct)",
-            "Encoding_Dim": 2 * K,
-            "Mean_SumRate_bps_Hz": sp_mean,
-            "Std_SumRate_bps_Hz": sp_std,
-            "Min_SumRate_bps_Hz": float(np.min(scipy_rates)),
-            "Max_SumRate_bps_Hz": float(np.max(scipy_rates)),
-            "CV_percent": 100.0 * sp_std / max(sp_mean, 1e-12),
-            "Mean_Runtime_ms": float(np.mean(scipy_times_ms)),
-            "Function_Evals": int(np.mean(scipy_evals)),
-        }
-    )
-
     df = pd.DataFrame(summary_rows)
     df.to_csv(data_dir / "exp6_stability_runtime.csv", index=False, float_format="%.6f")
     return df
@@ -505,7 +457,10 @@ def run_all_experiments(
     t_start = time.perf_counter()
     ensure_dirs(data_dir)
 
-    print(f"[BTL2] Running experiments (seed={cfg.seed}, num_trials={cfg.num_trials}, stability_runs={cfg.stability_runs})...")
+    print(
+        f"[BTL2-GA] Running experiments (seed={cfg.seed}, num_trials={cfg.num_trials}, "
+        f"stability_runs={cfg.stability_runs})..."
+    )
     run_exp1_geometry_and_beampattern(cfg, data_dir)
     run_exp2_power_sweep(cfg, data_dir)
     run_exp3_antenna_sweep(cfg, data_dir)
@@ -514,4 +469,4 @@ def run_all_experiments(
     run_exp6_convergence_stability_runtime(cfg, data_dir)
 
     total_s = time.perf_counter() - t_start
-    print(f"[BTL2] All experiments completed in {total_s:.2f} s. Data saved to: {data_dir}")
+    print(f"[BTL2-GA] All experiments completed in {total_s:.2f} s. Data saved to: {data_dir}")

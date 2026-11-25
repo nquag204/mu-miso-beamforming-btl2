@@ -1,4 +1,4 @@
-"""Unit tests for MU-MISO geometry, path-loss, and Rician channel generation."""
+"""Unit tests for polar-circle UE placement, log-distance path loss, and direct-sum Rician channel."""
 
 from __future__ import annotations
 
@@ -11,65 +11,78 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config import SystemConfig
 from src.channel import (
-    compute_path_gain,
+    compute_path_loss,
     generate_rician_channel,
-    sample_user_positions,
+    sample_user_positions_polar,
     ula_steering_matrix,
 )
+from src.utils import db_to_linear
 
 
-def test_user_positions_within_annular_sector() -> None:
+def test_polar_positions_within_circle() -> None:
     rng = np.random.default_rng(42)
-    distances, angles, xy = sample_user_positions(
-        num_users=500,
-        r_min_m=20.0,
-        r_max_m=100.0,
-        sector_angle_deg=120.0,
+    R, d0 = 100.0, 1.0
+    radii, dists, phis, xy = sample_user_positions_polar(
+        num_users=1000,
+        cell_radius_m=R,
+        d0_m=d0,
         rng=rng,
     )
-    assert distances.shape == (500,)
-    assert angles.shape == (500,)
-    assert xy.shape == (500, 2)
-    assert np.all(distances >= 20.0 - 1e-12)
-    assert np.all(distances <= 100.0 + 1e-12)
-    half_rad = np.deg2rad(60.0)
-    assert np.all(angles >= -half_rad - 1e-12)
-    assert np.all(angles <= half_rad + 1e-12)
-    np.testing.assert_allclose(np.linalg.norm(xy, axis=1), distances, rtol=1e-12)
+    assert radii.shape == (1000,)
+    assert dists.shape == (1000,)
+    assert phis.shape == (1000,)
+    assert xy.shape == (1000, 2)
+    assert np.all((radii >= 0.0) & (radii <= R))
+    assert np.all(dists >= d0)
+    assert np.all((phis >= 0.0) & (phis < 2.0 * np.pi))
+    np.testing.assert_allclose(xy[:, 0], radii * np.cos(phis), rtol=1e-12)
+    np.testing.assert_allclose(xy[:, 1], radii * np.sin(phis), rtol=1e-12)
 
 
-def test_path_gain_monotonic_decreasing() -> None:
-    d = np.array([10.0, 25.0, 50.0, 100.0])
-    beta = compute_path_gain(d, beta_0=1e-4, d0_m=1.0, path_loss_exponent=3.0)
-    assert np.all(beta > 0.0)
-    assert np.all(np.diff(beta) < 0.0)
-    np.testing.assert_allclose(beta[0] / beta[3], (100.0 / 10.0) ** 3.0, rtol=1e-12)
+def test_log_distance_path_loss_formula() -> None:
+    """Verify PL_k = PL_0 + 10*n*log10(d/d_0) with PL_0=30 dB, d_0=1 m, n=3.0."""
+    d = np.array([1.0, 10.0, 100.0])
+    pl_db, pl_lin = compute_path_loss(d, pl0_db=30.0, d0_m=1.0, path_loss_exponent=3.0)
+    np.testing.assert_allclose(pl_db, [30.0, 60.0, 90.0], rtol=1e-12)
+    np.testing.assert_allclose(pl_lin, [1e-3, 1e-6, 1e-9], rtol=1e-12)
 
 
 def test_ula_steering_matrix_norm() -> None:
-    M = 12
-    angles = np.linspace(-np.pi / 3, np.pi / 3, 7)
-    A = ula_steering_matrix(M, angles)
-    assert A.shape == (M, 7)
+    Nt = 12
+    angles = np.linspace(0.0, 2.0 * np.pi, 9, endpoint=False)
+    A = ula_steering_matrix(Nt, angles)
+    assert A.shape == (Nt, 9)
     col_norm_sq = np.sum(np.abs(A) ** 2, axis=0)
-    np.testing.assert_allclose(col_norm_sq, M, rtol=1e-12)
+    np.testing.assert_allclose(col_norm_sq, Nt, rtol=1e-12)
 
 
-def test_rician_channel_expected_power_invariant() -> None:
-    """Verify E[||h_k||_2^2] ~= M * beta_k across many independent draws."""
-    sys_cfg = SystemConfig(r_min_m=49.999, r_max_m=50.001, rician_k_db=6.0)
+def test_direct_sum_rician_structure_and_power_invariant() -> None:
+    """Verify h_k = sqrt(PL_k) * (h_{k,NLoS} + h_{k,LoS}), NLoS ~ N(0,1/2)+jN(0,1/2),
+    and E[||h_k||_2^2] ~= PL_k_lin * N_t * (1 + kappa)."""
+    sys_cfg = SystemConfig(cell_radius_m=100.0, pl0_db=30.0, d0_m=1.0, path_loss_exponent=3.0, rician_k_db=0.0)
     rng = np.random.default_rng(12345)
-    M, K = 8, 4
-    n_samples = 2000
+    Nt, K = 8, 4
+    kappa = float(db_to_linear(sys_cfg.rician_k_db))
 
     ratios = []
-    for _ in range(n_samples):
-        ch = generate_rician_channel(M, K, sys_cfg, rng)
-        ch_norm_sq = np.sum(np.abs(ch.H) ** 2, axis=0)
-        ratios.append(ch_norm_sq / (M * ch.beta))
+    nlos_re_vars = []
+    nlos_im_vars = []
+    for _ in range(1500):
+        ch = generate_rician_channel(Nt, K, sys_cfg, rng)
+        assert ch.H.shape == (Nt, K)
+        # Exact direct-sum algebraic check
+        np.testing.assert_allclose(ch.H_hat, ch.H_nlos + ch.H_los, rtol=1e-14, atol=1e-14)
+        np.testing.assert_allclose(ch.H, np.sqrt(ch.pl_linear)[None, :] * ch.H_hat, rtol=1e-14, atol=1e-14)
 
+        ch_norm_sq = np.sum(np.abs(ch.H) ** 2, axis=0)
+        ratios.append(ch_norm_sq / (ch.pl_linear * Nt * (1.0 + kappa)))
+        nlos_re_vars.append(np.mean(ch.H_nlos.real**2))
+        nlos_im_vars.append(np.mean(ch.H_nlos.imag**2))
+
+    assert abs(float(np.mean(nlos_re_vars)) - 0.5) < 0.02
+    assert abs(float(np.mean(nlos_im_vars)) - 0.5) < 0.02
     mean_ratio = float(np.mean(ratios))
-    assert abs(mean_ratio - 1.0) < 0.02, f"Expected E[||h_k||^2]/(M*beta_k) ~= 1, got {mean_ratio}"
+    assert abs(mean_ratio - 1.0) < 0.02, f"Expected E[||h_k||^2]/(PL*Nt*(1+kappa)) ~= 1, got {mean_ratio}"
 
 
 def test_channel_deterministic_with_seed() -> None:
@@ -83,6 +96,6 @@ def test_channel_deterministic_with_seed() -> None:
 def test_invalid_geometry_raises() -> None:
     rng = np.random.default_rng(1)
     with pytest.raises(ValueError):
-        sample_user_positions(0, 10.0, 50.0, 120.0, rng)
+        sample_user_positions_polar(0, 100.0, 1.0, rng)
     with pytest.raises(ValueError):
-        sample_user_positions(4, 100.0, 20.0, 120.0, rng)
+        sample_user_positions_polar(4, 1.0, 5.0, rng)

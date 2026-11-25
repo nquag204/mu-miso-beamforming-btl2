@@ -1,7 +1,7 @@
-"""Generate 300-DPI IEEE-publication-ready plots from cached Monte-Carlo data.
+"""Generate 300-DPI IEEE-publication-ready plots from cached Monte-Carlo data (GA focus).
 
 Can be executed standalone after main.py:
-    $env:MPLBACKEND = "Agg"; python "btl2\\plot_results.py"
+    $env:MPLBACKEND = "Agg"; python plot_results.py
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ import os
 from pathlib import Path
 import sys
 
-# Default to non-interactive backend when run headlessly
 if "MPLBACKEND" not in os.environ:
     os.environ["MPLBACKEND"] = "Agg"
 
@@ -18,6 +17,7 @@ import matplotlib
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -25,29 +25,22 @@ from config import DATA_DIR, DEFAULT_CONFIG, FIGURES_DIR, ExperimentConfig
 from src.utils import ensure_dirs
 
 
-# Consistent colorblind-friendly style registry across all figures
 METHOD_STYLES: dict[str, dict] = {
-    "WMMSE": {"color": "#111111", "linestyle": "-", "marker": "s", "linewidth": 2.1, "markersize": 6.0, "zorder": 9},
-    "Struct-DE": {"color": "#D62728", "linestyle": "--", "marker": "o", "linewidth": 2.2, "markersize": 6.0, "zorder": 10},
-    "Struct-PSO": {"color": "#FF7F0E", "linestyle": "-.", "marker": "^", "linewidth": 1.9, "markersize": 5.8, "zorder": 8},
-    "Struct-GA": {"color": "#9467BD", "linestyle": ":", "marker": "D", "linewidth": 1.9, "markersize": 5.2, "zorder": 7},
-    "RZF": {"color": "#1F77B4", "linestyle": "-", "marker": "v", "linewidth": 1.8, "markersize": 5.5, "zorder": 6},
-    "ZF": {"color": "#2CA02C", "linestyle": "--", "marker": "P", "linewidth": 1.7, "markersize": 5.5, "zorder": 5},
-    "Direct-DE": {"color": "#E377C2", "linestyle": "-", "marker": "x", "linewidth": 1.6, "markersize": 6.0, "zorder": 4},
-    "Direct-PSO": {"color": "#17BECF", "linestyle": "-.", "marker": "+", "linewidth": 1.6, "markersize": 6.5, "zorder": 3},
-    "Direct-GA": {"color": "#8C564B", "linestyle": ":", "marker": "1", "linewidth": 1.6, "markersize": 7.0, "zorder": 2},
-    "MRT": {"color": "#7F7F7F", "linestyle": "--", "marker": "*", "linewidth": 1.7, "markersize": 6.5, "zorder": 1},
+    "Struct-GA": {"color": "#D62728", "linestyle": "-", "marker": "o", "linewidth": 2.3, "markersize": 6.2, "zorder": 10},
+    "WMMSE": {"color": "#111111", "linestyle": "--", "marker": "s", "linewidth": 2.0, "markersize": 5.8, "zorder": 9},
+    "Hybrid-GA": {"color": "#FF7F0E", "linestyle": "-.", "marker": "^", "linewidth": 2.0, "markersize": 6.0, "zorder": 8},
+    "ZF": {"color": "#2CA02C", "linestyle": "--", "marker": "P", "linewidth": 1.8, "markersize": 5.6, "zorder": 6},
+    "RZF": {"color": "#1F77B4", "linestyle": "-", "marker": "v", "linewidth": 1.8, "markersize": 5.6, "zorder": 5},
+    "Direct-GA": {"color": "#9467BD", "linestyle": ":", "marker": "D", "linewidth": 2.0, "markersize": 5.4, "zorder": 4},
+    "MRT": {"color": "#7F7F7F", "linestyle": "--", "marker": "*", "linewidth": 1.7, "markersize": 6.8, "zorder": 2},
 }
 
 SWEEP_PLOT_ORDER: tuple[str, ...] = (
-    "WMMSE",
-    "Struct-DE",
-    "Struct-PSO",
     "Struct-GA",
-    "RZF",
+    "WMMSE",
+    "Hybrid-GA",
     "ZF",
-    "Direct-DE",
-    "Direct-PSO",
+    "RZF",
     "Direct-GA",
     "MRT",
 )
@@ -61,7 +54,7 @@ def _configure_matplotlib() -> None:
             "axes.titlesize": 11.5,
             "axes.titleweight": "bold",
             "axes.labelsize": 10.5,
-            "legend.fontsize": 8.8,
+            "legend.fontsize": 9.0,
             "xtick.labelsize": 9.5,
             "ytick.labelsize": 9.5,
             "axes.grid": True,
@@ -81,79 +74,285 @@ def _save_fig(fig: plt.Figure, stem: str, fig_dir: Path, cfg: ExperimentConfig) 
     print(f"  [Saved] {png_path.name}")
 
 
+def plot_system_architecture_diagram(
+    fig_dir: Path = FIGURES_DIR,
+    cfg: ExperimentConfig = DEFAULT_CONFIG,
+) -> None:
+    """Sơ đồ 1: MU-MISO downlink polar circular model & Genetic Algorithm optimization loop."""
+    s = cfg.system
+    fig, ax = plt.subplots(figsize=(12.2, 5.15))
+    ax.set_xlim(0, 12.4)
+    ax.set_ylim(0, 5.25)
+    ax.axis("off")
+
+    def draw_box(
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        title: str,
+        body: str,
+        fc: str,
+        ec: str,
+        title_color: str = "#0F2942",
+    ) -> None:
+        box = patches.FancyBboxPatch(
+            (x, y),
+            w,
+            h,
+            boxstyle="round,pad=0.06,rounding_size=0.14",
+            linewidth=1.5,
+            edgecolor=ec,
+            facecolor=fc,
+            zorder=3,
+        )
+        ax.add_patch(box)
+        ax.text(
+            x + w / 2.0,
+            y + h - 0.28,
+            title,
+            ha="center",
+            va="top",
+            fontsize=9.7,
+            fontweight="bold",
+            color=title_color,
+            zorder=4,
+        )
+        ax.text(
+            x + w / 2.0,
+            y + h / 2.0 - 0.16,
+            body,
+            ha="center",
+            va="center",
+            fontsize=8.5,
+            color="#222222",
+            linespacing=1.32,
+            zorder=4,
+        )
+
+    def draw_arrow(
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        label: str = "",
+        lx: float = 0.0,
+        ly: float = 0.0,
+        color: str = "#1F4E79",
+    ) -> None:
+        ax.annotate(
+            "",
+            xy=(x2, y2),
+            xytext=(x1, y1),
+            arrowprops=dict(arrowstyle="-|>,head_length=0.55,head_width=0.32", lw=1.6, color=color),
+            zorder=5,
+        )
+        if label:
+            ax.text(lx, ly, label, ha="center", va="center", fontsize=8.4, fontweight="bold", color=color, zorder=6)
+
+    bs_frame = patches.FancyBboxPatch(
+        (0.25, 2.58),
+        6.10,
+        2.36,
+        boxstyle="round,pad=0.06,rounding_size=0.16",
+        linewidth=1.3,
+        linestyle="--",
+        edgecolor="#1F4E79",
+        facecolor="#F4F8FC",
+        zorder=1,
+    )
+    ax.add_patch(bs_frame)
+    ax.text(
+        0.45,
+        4.82,
+        f"TRẠM GỐC BS TẠI TÂM O(0,0) (N_t anten ULA, bán kính R = {s.cell_radius_m:.0f} m, P_max)",
+        fontsize=9.1,
+        fontweight="bold",
+        color="#1F4E79",
+        va="top",
+    )
+
+    draw_box(
+        0.45, 2.82, 1.78, 1.60,
+        "Nguồn dữ liệu",
+        "K luồng độc lập\ns = [s₁, ..., s_K]ᵀ\nE[s sᴴ] = I_K",
+        fc="#FFFFFF", ec="#1F4E79",
+    )
+    draw_box(
+        2.63, 2.82, 2.05, 1.60,
+        "Bộ tạo búp sóng W",
+        "W = [w₁, ..., w_K] ∈ ℂ^(Nt×K)\nx = Σ w_k s_k\n||W||_F² = P_max",
+        fc="#E3F0FB", ec="#1F4E79",
+    )
+    draw_box(
+        5.03, 2.82, 1.18, 1.60,
+        "Mảng ULA",
+        "N_t anten\nd_a = λ/2\nPhủ 360°",
+        fc="#FFFFFF", ec="#1F4E79",
+    )
+    draw_box(
+        6.75, 2.82, 2.55, 1.60,
+        "Kênh Rician cộng trực tiếp",
+        f"r_k=R·rand(), Φ_k=2π·rand()\nPL_k = {s.pl0_db:.0f} + 10·{s.path_loss_exponent:.1f}·log₁₀(d_k/d₀)\nh_k = √PL_k · (h_NLoS + h_LoS)",
+        fc="#FFF6E5", ec="#D97706", title_color="#92400E",
+    )
+    draw_box(
+        9.75, 2.82, 2.40, 1.60,
+        "K Người dùng (UE)",
+        f"y_k = h_kᴴ w_k s_k + MUI + n_k\nn_k ~ CN(0, σ² = {s.noise_power_dbm:.0f} dBm)\nSINR_k → R_sum = Σ log₂(1+SINR_k)",
+        fc="#EAF7EE", ec="#2E7D32", title_color="#1B5E20",
+    )
+
+    draw_arrow(2.23, 3.62, 2.63, 3.62, "s", 2.43, 3.85)
+    draw_arrow(4.68, 3.62, 5.03, 3.62, "x", 4.86, 3.85)
+    draw_arrow(6.21, 3.62, 6.75, 3.62, "Phát", 6.48, 3.87)
+    draw_arrow(9.30, 3.62, 9.75, 3.62, "Hᴴx", 9.52, 3.85)
+
+    opt_frame = patches.FancyBboxPatch(
+        (1.60, 0.25),
+        8.75,
+        1.82,
+        boxstyle="round,pad=0.06,rounding_size=0.16",
+        linewidth=1.5,
+        edgecolor="#9B1C1C",
+        facecolor="#FDF2F2",
+        zorder=1,
+    )
+    ax.add_patch(opt_frame)
+    ax.text(
+        1.80,
+        1.96,
+        "KHỐI TỐI ƯU BEAMFORMING BẰNG GIẢI THUẬT DI TRUYỀN (GENETIC ALGORITHM – GA)",
+        fontsize=9.2,
+        fontweight="bold",
+        color="#9B1C1C",
+        va="top",
+    )
+
+    draw_box(
+        1.85, 0.42, 2.55, 1.24,
+        "1. Mã hóa NST (Chromosome)",
+        "• Direct-GA: 2·N_t·K gen thực\n• Hybrid-GA: Khởi tạo MRT/ZF/RZF\n• Struct-GA: 2K gen (p, λ) đối ngẫu",
+        fc="#FFFFFF", ec="#B91C1C", title_color="#9B1C1C",
+    )
+    draw_box(
+        4.75, 0.42, 2.60, 1.24,
+        "2. Toán tử Tiến hóa GA",
+        "Chọn lọc Tournament (cỡ 3)\nLai ghép BLX-α (p_c=0.9, α=0.3)\nĐột biến Gaussian + Elitism (2)",
+        fc="#FFFFFF", ec="#B91C1C", title_color="#9B1C1C",
+    )
+    draw_box(
+        7.70, 0.42, 2.40, 1.24,
+        "3. Chiếu công suất & Fitness",
+        "Chiếu chuẩn ||W||_F² = P_max\nĐánh giá lô R_sum / Gram O(K³)\nĐối chiếu: MRT, ZF, RZF, WMMSE",
+        fc="#FFFFFF", ec="#B91C1C", title_color="#9B1C1C",
+    )
+
+    draw_arrow(4.40, 1.04, 4.75, 1.04, color="#9B1C1C")
+    draw_arrow(7.35, 1.04, 7.70, 1.04, color="#9B1C1C")
+
+    ax.annotate(
+        "",
+        xy=(8.02, 2.13),
+        xytext=(8.02, 2.76),
+        arrowprops=dict(arrowstyle="-|>,head_length=0.55,head_width=0.32", lw=1.8, color="#B45309"),
+        zorder=5,
+    )
+    ax.text(8.18, 2.44, "CSI hoàn hảo H (N_t×K)", ha="left", va="center", fontsize=8.6, fontweight="bold", color="#B45309")
+
+    ax.annotate(
+        "",
+        xy=(3.65, 2.76),
+        xytext=(3.65, 2.13),
+        arrowprops=dict(arrowstyle="-|>,head_length=0.55,head_width=0.32", lw=1.8, color="#9B1C1C"),
+        zorder=5,
+    )
+    ax.text(3.82, 2.40, "Nghiệm tối ưu W*", ha="left", va="center", fontsize=8.7, fontweight="bold", color="#9B1C1C")
+
+    fig.suptitle(
+        f"Sơ đồ kiến trúc hệ thống MU-MISO tọa độ cực và vòng lặp tối ưu GA (N_t={s.default_nt}, K={s.default_k})",
+        fontsize=11.5,
+        fontweight="bold",
+        color="#0F2942",
+        y=0.98,
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    _save_fig(fig, "sodo1_system_architecture", fig_dir, cfg)
+
+
 def plot_exp1_geometry_and_beampattern(
     data_dir: Path = DATA_DIR,
     fig_dir: Path = FIGURES_DIR,
     cfg: ExperimentConfig = DEFAULT_CONFIG,
 ) -> None:
-    """Fig 1: Two-panel system scenario (UE spatial sector) + ULA normalized beampattern."""
+    """Fig 1: Polar circular coverage cell O(0,0) radius R + 360-deg polar beampattern of Struct-GA."""
     d = np.load(data_dir / "exp1_geometry_beampattern.npz")
     positions_xy = d["positions_xy"]
+    radii_m = d["radii_m"]
     angles_rad = d["angles_rad"]
-    distances_m = d["distances_m"]
-    angles_grid_deg = d["angles_grid_deg"]
-    pat_sde = d["pat_sde"]
+    angles_grid_rad = d["angles_grid_rad"]
+    pat_sga = d["pat_sga"]
     rate_mrt = float(d["rate_mrt"][0])
-    rate_sde = float(d["rate_sde"][0])
+    rate_sga = float(d["rate_sga"][0])
     rate_wmmse = float(d["rate_wmmse"][0])
 
     s = cfg.system
     K = positions_xy.shape[0]
     ue_colors = ["#1F77B4", "#D62728", "#2CA02C", "#FF7F0E", "#9467BD", "#17BECF"]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.2, 4.9))
+    fig = plt.figure(figsize=(12.2, 5.3))
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax2 = fig.add_subplot(1, 2, 2, projection="polar")
 
-    # Left panel: 2D annular sector deployment
-    half_rad = np.deg2rad(s.sector_angle_deg) / 2.0
-    arc = np.linspace(-half_rad, half_rad, 200)
-    ax1.plot(s.r_min_m * np.cos(arc), s.r_min_m * np.sin(arc), "k--", lw=1.1, alpha=0.6)
-    ax1.plot(s.r_max_m * np.cos(arc), s.r_max_m * np.sin(arc), "k-", lw=1.3, alpha=0.8)
-    for boundary in (-half_rad, half_rad):
-        ax1.plot(
-            [s.r_min_m * np.cos(boundary), s.r_max_m * np.cos(boundary)],
-            [s.r_min_m * np.sin(boundary), s.r_max_m * np.sin(boundary)],
-            "k-",
-            lw=1.3,
-            alpha=0.8,
-        )
-    # Fill annular sector
-    outer_x, outer_y = s.r_max_m * np.cos(arc), s.r_max_m * np.sin(arc)
-    inner_x, inner_y = s.r_min_m * np.cos(arc[::-1]), s.r_min_m * np.sin(arc[::-1])
-    ax1.fill(np.concatenate([outer_x, inner_x]), np.concatenate([outer_y, inner_y]), color="#E8F1FA", alpha=0.55)
+    # Left panel: Full circular cell centered at O(0, 0) with radius R
+    circle_ang = np.linspace(0.0, 2.0 * np.pi, 360)
+    cx, cy = s.cell_radius_m * np.cos(circle_ang), s.cell_radius_m * np.sin(circle_ang)
+    ax1.fill(cx, cy, color="#EBF4FC", alpha=0.55)
+    ax1.plot(cx, cy, "k-", lw=1.4, label=f"Vùng phủ (R = {s.cell_radius_m:.0f} m)")
+    for rad_ring in (s.cell_radius_m * 0.25, s.cell_radius_m * 0.5, s.cell_radius_m * 0.75):
+        ax1.plot(rad_ring * np.cos(circle_ang), rad_ring * np.sin(circle_ang), "k:", lw=0.7, alpha=0.4)
 
-    ax1.scatter([0.0], [0.0], marker="^", s=160, color="#111111", zorder=10, label=f"BS (ULA, M={s.default_m})")
+    ax1.scatter([0.0], [0.0], marker="^", s=165, color="#111111", zorder=10, label=f"BS tại O(0,0) (N_t={s.default_nt})")
     for k in range(K):
         xk, yk = positions_xy[k]
         c = ue_colors[k % len(ue_colors)]
-        ax1.plot([0.0, xk], [0.0, yk], linestyle=":", color=c, alpha=0.75, lw=1.1)
-        ax1.scatter([xk], [yk], s=95, color=c, edgecolor="black", linewidth=0.8, zorder=9,
-                    label=f"UE {k+1} (d={distances_m[k]:.1f} m, θ={np.rad2deg(angles_rad[k]):+.1f}°)")
-        ax1.annotate(f"UE {k+1}", (xk, yk), xytext=(5, 5), textcoords="offset points", fontsize=9, fontweight="bold", color=c)
+        ax1.plot([0.0, xk], [0.0, yk], linestyle=":", color=c, alpha=0.8, lw=1.2)
+        ax1.scatter(
+            [xk],
+            [yk],
+            s=95,
+            color=c,
+            edgecolor="black",
+            linewidth=0.8,
+            zorder=9,
+            label=f"UE {k+1} (r={radii_m[k]:.1f} m, Φ={np.rad2deg(angles_rad[k]):.1f}°)",
+        )
+        ax1.annotate(f"UE {k+1}", (xk, yk), xytext=(6, 5), textcoords="offset points", fontsize=9, fontweight="bold", color=c)
 
-    ax1.set_title("(a) Kịch bản phủ sóng MU-MISO (Sector 120°)")
-    ax1.set_xlabel("Tọa độ x (m)")
-    ax1.set_ylabel("Tọa độ y (m)")
+    ax1.set_title(f"(a) Mô hình tọa độ cực tâm O(0,0), bán kính R = {s.cell_radius_m:.0f} m")
+    ax1.set_xlabel("Tọa độ x = r·cos(Φ) (m)")
+    ax1.set_ylabel("Tọa độ y = r·sin(Φ) (m)")
     ax1.set_aspect("equal", adjustable="box")
-    ax1.set_xlim(-10, s.r_max_m + 12)
-    ax1.set_ylim(-s.r_max_m * np.sin(half_rad) - 12, s.r_max_m * np.sin(half_rad) + 12)
-    ax1.legend(loc="lower left", fontsize=8.0, framealpha=0.92)
+    lim = s.cell_radius_m * 1.15
+    ax1.set_xlim(-lim, lim)
+    ax1.set_ylim(-lim, lim)
+    ax1.legend(loc="lower left", fontsize=7.8, framealpha=0.92)
 
-    # Right panel: Angular beampattern (dB normalized per beam peak) of Struct-DE
-    max_pat = float(np.max(pat_sde))
+    # Right panel: 360-deg polar beampattern of Struct-GA
+    max_pat = float(np.max(pat_sga))
     for k in range(K):
         c = ue_colors[k % len(ue_colors)]
-        pat_db = 10.0 * np.log10(np.maximum(pat_sde[k] / max(max_pat, 1e-30), 1e-6))
-        ax2.plot(angles_grid_deg, pat_db, color=c, lw=1.8, label=f"Búp sóng UE {k+1}")
-        ax2.axvline(np.rad2deg(angles_rad[k]), color=c, linestyle="--", lw=1.0, alpha=0.7)
+        pat_norm = np.sqrt(np.maximum(pat_sga[k] / max(max_pat, 1e-30), 0.0))
+        ax2.plot(angles_grid_rad, pat_norm, color=c, lw=1.9, label=f"Búp sóng UE {k+1}")
+        ax2.plot([angles_rad[k], angles_rad[k]], [0.0, 1.05], color=c, linestyle="--", lw=1.1, alpha=0.75)
 
     ax2.set_title(
-        f"(b) Giản đồ búp sóng Struct-DE (R={rate_sde:.2f} vs WMMSE {rate_wmmse:.2f}, MRT {rate_mrt:.2f} bps/Hz)"
+        f"(b) Giản đồ búp sóng cực Struct-GA\n(R_GA={rate_sga:.2f} vs WMMSE {rate_wmmse:.2f}, MRT {rate_mrt:.2f} bps/Hz)",
+        pad=14,
     )
-    ax2.set_xlabel("Góc phương vị θ (độ)")
-    ax2.set_ylabel("Độ lợi bức xạ chuẩn hóa (dB)")
-    ax2.set_xlim(-75, 75)
-    ax2.set_ylim(-35, 2)
-    ax2.legend(loc="lower center", ncol=2, fontsize=8.5, framealpha=0.92)
+    ax2.set_ylim(0.0, 1.08)
+    ax2.set_rticks([0.25, 0.5, 0.75, 1.0])
+    ax2.legend(loc="upper right", bbox_to_anchor=(1.22, 1.08), fontsize=8.3, framealpha=0.92)
 
     fig.tight_layout()
     _save_fig(fig, "fig1_geometry_beampattern", fig_dir, cfg)
@@ -211,7 +410,7 @@ def plot_exp2_power_sweep(
     _plot_sweep_figure(
         npz_path=data_dir / "exp2_power_sweep.npz",
         stem="fig2_sumrate_vs_power",
-        title=f"Tổng tốc độ bit trung bình theo công suất phát BS (M={s.default_m}, K={s.default_k}, K_Rician={s.rician_k_db:.0f} dB)",
+        title=f"Tổng tốc độ bit trung bình theo công suất phát P_max (N_t={s.default_nt}, K={s.default_k}, n={s.path_loss_exponent:.1f})",
         xlabel="Công suất phát tối đa của trạm gốc P_max (dBm)",
         fig_dir=fig_dir,
         cfg=cfg,
@@ -228,8 +427,8 @@ def plot_exp3_antenna_sweep(
     _plot_sweep_figure(
         npz_path=data_dir / "exp3_antenna_sweep.npz",
         stem="fig3_sumrate_vs_antennas",
-        title=f"Ảnh hưởng của số anten trạm gốc M đến tổng tốc độ bit (K={s.default_k}, P_max={s.default_p_max_dbm:.0f} dBm)",
-        xlabel="Số lượng anten trạm gốc M",
+        title=f"Ảnh hưởng của số anten trạm gốc N_t đến tổng tốc độ bit (K={s.default_k}, P_max={s.default_p_max_dbm:.0f} dBm)",
+        xlabel="Số lượng anten phát tại trạm gốc N_t",
         fig_dir=fig_dir,
         cfg=cfg,
         legend_loc="upper left",
@@ -245,12 +444,12 @@ def plot_exp4_user_sweep(
     _plot_sweep_figure(
         npz_path=data_dir / "exp4_user_sweep.npz",
         stem="fig4_sumrate_vs_users",
-        title=f"Ảnh hưởng của số người dùng K đến tổng tốc độ bit (M={s.default_m}, P_max={s.default_p_max_dbm:.0f} dBm)",
+        title=f"Ảnh hưởng của số người dùng K đến tổng tốc độ bit (N_t={s.default_nt}, P_max={s.default_p_max_dbm:.0f} dBm)",
         xlabel="Số lượng người dùng đơn anten K",
         fig_dir=fig_dir,
         cfg=cfg,
         legend_loc="upper left",
-        vertical_note=(float(s.default_m), "Ranh giới quá tải\n(K = M = 8)"),
+        vertical_note=(float(s.default_nt), f"Ranh giới quá tải\n(K = N_t = {s.default_nt})"),
     )
 
 
@@ -263,11 +462,11 @@ def plot_exp5_rician_k_sweep(
     _plot_sweep_figure(
         npz_path=data_dir / "exp5_rician_k_sweep.npz",
         stem="fig5_sumrate_vs_rician_k",
-        title=f"Ảnh hưởng của hệ số Rician K-factor (M={s.default_m}, K={s.default_k}, P_max={s.default_p_max_dbm:.0f} dBm)",
-        xlabel="Hệ số Rician K-factor (dB)  [Rayleigh NLoS  →  LoS mạnh]",
+        title=f"Ảnh hưởng của thành phần LoS (Rician K-factor) trong mô hình cộng trực tiếp (N_t={s.default_nt}, K={s.default_k})",
+        xlabel="Hệ số Rician K-factor (dB)  [NLoS Rayleigh  →  LoS mạnh]",
         fig_dir=fig_dir,
         cfg=cfg,
-        legend_loc="center right",
+        legend_loc="upper left",
     )
 
 
@@ -276,97 +475,90 @@ def plot_exp6_convergence_and_stability(
     fig_dir: Path = FIGURES_DIR,
     cfg: ExperimentConfig = DEFAULT_CONFIG,
 ) -> None:
-    """Fig 6 (Convergence envelopes) & Fig 7 (Stability boxplot + Runtime log-bar)."""
+    """Fig 6 (GA convergence envelopes) & Fig 7 (30-run GA stability boxplot + Runtime)."""
     d = np.load(data_dir / "exp6_convergence_stability.npz")
     mrt_rate = float(d["mrt_rate"][0])
     zf_rate = float(d["zf_rate"][0])
     rzf_rate = float(d["rzf_rate"][0])
     wmmse_rate = float(d["wmmse_rate"][0])
 
-    # --- Figure 6: Convergence Curves (Direct vs Structure-Guided) ---
+    s = cfg.system
     fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(12.2, 4.9), sharey=True)
 
     for ax, group, title_sub in (
-        (ax_l, ("Direct-DE", "Direct-PSO", "Direct-GA"), "(a) Biểu diễn trực tiếp (2MK = 64 biến)"),
-        (ax_r, ("Struct-DE", "Struct-PSO", "Struct-GA"), "(b) Biểu diễn theo cấu trúc tối ưu (2K = 8 biến)"),
+        (ax_l, ("Direct-GA", "Hybrid-GA"), f"(a) Biểu diễn trực tiếp (2·N_t·K = {2*s.default_nt*s.default_k} gen)"),
+        (ax_r, ("Struct-GA",), f"(b) Biểu diễn cấu trúc tối ưu (2K = {2*s.default_k} gen)"),
     ):
         for name in group:
-            hist = d[f"hist_{name.replace('-', '_')}"]   # (n_runs, iters+1)
+            hist = d[f"hist_{name.replace('-', '_')}"]
             iters = np.arange(hist.shape[1])
             mean_h = np.mean(hist, axis=0)
             std_h = np.std(hist, axis=0)
             style = METHOD_STYLES[name]
-            ax.plot(iters, mean_h, color=style["color"], linestyle=style["linestyle"], linewidth=2.1, label=f"{name} (mean ± 1σ)")
+            ax.plot(iters, mean_h, color=style["color"], linestyle=style["linestyle"], linewidth=2.2, label=f"{name} (mean ± 1σ)")
             ax.fill_between(iters, mean_h - std_h, mean_h + std_h, color=style["color"], alpha=0.18)
 
-        ax.axhline(wmmse_rate, color="#111111", linestyle="-", lw=1.5, label=f"WMMSE ({wmmse_rate:.2f})")
-        ax.axhline(rzf_rate, color="#1F77B4", linestyle="--", lw=1.3, label=f"RZF ({rzf_rate:.2f})")
-        ax.axhline(zf_rate, color="#2CA02C", linestyle=":", lw=1.3, label=f"ZF ({zf_rate:.2f})")
-        ax.axhline(mrt_rate, color="#7F7F7F", linestyle="-.", lw=1.3, label=f"MRT ({mrt_rate:.2f})")
+        ax.axhline(wmmse_rate, color="#111111", linestyle="--", lw=1.5, label=f"WMMSE ({wmmse_rate:.2f})")
+        ax.axhline(zf_rate, color="#2CA02C", linestyle=":", lw=1.4, label=f"ZF ({zf_rate:.2f})")
+        ax.axhline(rzf_rate, color="#1F77B4", linestyle="-.", lw=1.3, label=f"RZF ({rzf_rate:.2f})")
+        ax.axhline(mrt_rate, color="#7F7F7F", linestyle="--", lw=1.3, label=f"MRT ({mrt_rate:.2f})")
 
         ax.set_title(title_sub)
-        ax.set_xlabel("Thế hệ / Vòng lặp (Iteration)")
-        ax.legend(loc="lower right", fontsize=8.2, framealpha=0.92)
+        ax.set_xlabel("Thế hệ tiến hóa (Generation)")
+        ax.legend(loc="lower right", fontsize=8.4, framealpha=0.92)
 
     ax_l.set_ylabel("Tổng tốc độ bit tốt nhất (bps/Hz)")
 
-    # Add zoomed-in inset inside panel (b) placed cleanly above the legend
-    inset_ax = ax_r.inset_axes([0.11, 0.45, 0.55, 0.36])
-    for name in ("Struct-DE", "Struct-PSO", "Struct-GA"):
-        hist = d[f"hist_{name.replace('-', '_')}"]
-        iters_z = np.arange(min(26, hist.shape[1]))
-        mean_z = np.mean(hist[:, : len(iters_z)], axis=0)
-        std_z = np.std(hist[:, : len(iters_z)], axis=0)
-        style = METHOD_STYLES[name]
-        inset_ax.plot(iters_z, mean_z, color=style["color"], linestyle=style["linestyle"], linewidth=1.8)
-        inset_ax.fill_between(iters_z, mean_z - std_z, mean_z + std_z, color=style["color"], alpha=0.2)
+    # Zoomed inset for Struct-GA first 25 generations
+    hist_sga = d["hist_Struct_GA"]
+    iters_z = np.arange(min(26, hist_sga.shape[1]))
+    mean_z = np.mean(hist_sga[:, : len(iters_z)], axis=0)
+    std_z = np.std(hist_sga[:, : len(iters_z)], axis=0)
+    inset_ax = ax_r.inset_axes([0.11, 0.44, 0.56, 0.36])
+    inset_ax.plot(iters_z, mean_z, color=METHOD_STYLES["Struct-GA"]["color"], lw=2.0)
+    inset_ax.fill_between(iters_z, mean_z - std_z, mean_z + std_z, color=METHOD_STYLES["Struct-GA"]["color"], alpha=0.22)
     inset_ax.set_xlim(0, 25)
-    y_min_z = min(float(np.min(np.mean(d[f"hist_{n.replace('-', '_')}"], axis=0))) for n in ("Struct-DE", "Struct-PSO", "Struct-GA")) - 0.45
-    y_max_z = max(float(np.max(np.mean(d[f"hist_{n.replace('-', '_')}"], axis=0))) for n in ("Struct-DE", "Struct-PSO", "Struct-GA")) + 0.18
-    inset_ax.set_ylim(y_min_z, y_max_z)
-    inset_ax.set_title("Phóng to 25 vòng đầu", fontsize=8.5, fontweight="bold")
+    inset_ax.set_ylim(float(np.min(mean_z - std_z)) - 0.25, float(np.max(mean_z + std_z)) + 0.20)
+    inset_ax.set_title("Phóng to 25 thế hệ đầu (Struct-GA)", fontsize=8.3, fontweight="bold")
     inset_ax.tick_params(labelsize=7.8)
     inset_ax.grid(True, linestyle=":", alpha=0.6)
 
-    fig.suptitle(f"Đường cong hội tụ trung bình trên {cfg.stability_runs} lần chạy độc lập (M={cfg.system.default_m}, K={cfg.system.default_k}, P_max={cfg.system.default_p_max_dbm:.0f} dBm)", fontweight="bold", y=1.01)
+    fig.suptitle(
+        f"Đường cong hội tụ trung bình của GA trên {cfg.stability_runs} lần chạy độc lập (N_t={s.default_nt}, K={s.default_k}, P_max={s.default_p_max_dbm:.0f} dBm)",
+        fontweight="bold",
+        y=1.01,
+    )
     fig.tight_layout()
     _save_fig(fig, "fig6_convergence_curves", fig_dir, cfg)
 
     # --- Figure 7: Stability Boxplot & Computational Runtime ---
-    meta_names = ["Direct-GA", "Direct-PSO", "Direct-DE", "Struct-GA", "Struct-PSO", "Struct-DE"]
-    box_data = [d[f"final_{m.replace('-', '_')}"] for m in meta_names]
-    mean_ms = [float(np.mean(d[f"time_ms_{m.replace('-', '_')}"])) for m in meta_names]
-
-    # Also load baseline runtimes from CSV for complete runtime panel
-    csv_path = data_dir / "exp6_stability_runtime.csv"
-    import pandas as pd
-
-    df_rt = pd.read_csv(csv_path)
+    ga_names = ["Direct-GA", "Hybrid-GA", "Struct-GA"]
+    box_data = [d[f"final_{m.replace('-', '_')}"] for m in ga_names]
+    df_rt = pd.read_csv(data_dir / "exp6_stability_runtime.csv")
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.2, 4.9))
 
-    bp = ax1.boxplot(box_data, tick_labels=meta_names, patch_artist=True, widths=0.55)
-    for patch, m in zip(bp["boxes"], meta_names):
+    bp = ax1.boxplot(box_data, tick_labels=ga_names, patch_artist=True, widths=0.45)
+    for patch, m in zip(bp["boxes"], ga_names):
         patch.set_facecolor(METHOD_STYLES[m]["color"])
-        patch.set_alpha(0.55)
+        patch.set_alpha(0.58)
     for median in bp["medians"]:
         median.set_color("#111111")
-        median.set_linewidth(1.8)
+        median.set_linewidth(1.9)
 
     ax1.axhline(wmmse_rate, color="#111111", linestyle="--", lw=1.4, label=f"WMMSE ({wmmse_rate:.2f} bps/Hz)")
-    ax1.axhline(rzf_rate, color="#1F77B4", linestyle=":", lw=1.3, label=f"RZF ({rzf_rate:.2f} bps/Hz)")
-    ax1.set_title(f"(a) Độ ổn định nghiệm qua {cfg.stability_runs} lần chạy độc lập")
+    ax1.axhline(zf_rate, color="#2CA02C", linestyle=":", lw=1.4, label=f"ZF ({zf_rate:.2f} bps/Hz)")
+    ax1.axhline(rzf_rate, color="#1F77B4", linestyle="-.", lw=1.3, label=f"RZF ({rzf_rate:.2f} bps/Hz)")
+    ax1.set_title(f"(a) Độ ổn định nghiệm GA qua {cfg.stability_runs} lần chạy độc lập")
     ax1.set_ylabel("Tổng tốc độ bit cuối cùng (bps/Hz)")
-    ax1.tick_params(axis="x", rotation=22)
     ax1.legend(loc="lower right", fontsize=8.6)
 
-    # Runtime horizontal bar chart (log scale)
     rt_methods = df_rt["Method"].tolist()
     rt_vals = df_rt["Mean_Runtime_ms"].tolist()
     bar_colors = [METHOD_STYLES.get(m, {"color": "#555555"})["color"] for m in rt_methods]
 
     y_pos = np.arange(len(rt_methods))
-    bars = ax2.barh(y_pos, rt_vals, color=bar_colors, alpha=0.82, edgecolor="#222222", linewidth=0.7)
+    bars = ax2.barh(y_pos, rt_vals, color=bar_colors, alpha=0.84, edgecolor="#222222", linewidth=0.7)
     ax2.set_yticks(y_pos)
     ax2.set_yticklabels(rt_methods)
     ax2.set_xscale("log")
@@ -380,197 +572,12 @@ def plot_exp6_convergence_and_stability(
             bar.get_y() + bar.get_height() / 2.0,
             f"{val:.2f} ms" if val >= 0.1 else f"{val:.3f} ms",
             va="center",
-            fontsize=8.3,
+            fontsize=8.5,
         )
     ax2.set_xlim(right=max(rt_vals) * 4.5)
 
     fig.tight_layout()
     _save_fig(fig, "fig7_stability_runtime", fig_dir, cfg)
-
-
-def plot_system_architecture_diagram(
-    fig_dir: Path = FIGURES_DIR,
-    cfg: ExperimentConfig = DEFAULT_CONFIG,
-) -> None:
-    """Sơ đồ 1: MU-MISO downlink signal chain and metaheuristic optimization loop."""
-    s = cfg.system
-    fig, ax = plt.subplots(figsize=(12.2, 5.1))
-    ax.set_xlim(0, 12.4)
-    ax.set_ylim(0, 5.2)
-    ax.axis("off")
-
-    def draw_box(
-        x: float,
-        y: float,
-        w: float,
-        h: float,
-        title: str,
-        body: str,
-        fc: str,
-        ec: str,
-        title_color: str = "#0F2942",
-    ) -> None:
-        box = patches.FancyBboxPatch(
-            (x, y),
-            w,
-            h,
-            boxstyle="round,pad=0.06,rounding_size=0.14",
-            linewidth=1.5,
-            edgecolor=ec,
-            facecolor=fc,
-            zorder=3,
-        )
-        ax.add_patch(box)
-        ax.text(
-            x + w / 2.0,
-            y + h - 0.30,
-            title,
-            ha="center",
-            va="top",
-            fontsize=9.8,
-            fontweight="bold",
-            color=title_color,
-            zorder=4,
-        )
-        ax.text(
-            x + w / 2.0,
-            y + h / 2.0 - 0.16,
-            body,
-            ha="center",
-            va="center",
-            fontsize=8.6,
-            color="#222222",
-            linespacing=1.32,
-            zorder=4,
-        )
-
-    def draw_arrow(x1: float, y1: float, x2: float, y2: float, label: str = "", lx: float = 0.0, ly: float = 0.0, color: str = "#1F4E79", ls: str = "-") -> None:
-        ax.annotate(
-            "",
-            xy=(x2, y2),
-            xytext=(x1, y1),
-            arrowprops=dict(arrowstyle="-|>,head_length=0.55,head_width=0.32", lw=1.6, color=color, linestyle=ls),
-            zorder=5,
-        )
-        if label:
-            ax.text(lx, ly, label, ha="center", va="center", fontsize=8.4, fontweight="bold", color=color, zorder=6)
-
-    # Outer grouping frame: Base Station (BS)
-    bs_frame = patches.FancyBboxPatch(
-        (0.25, 2.55),
-        6.15,
-        2.35,
-        boxstyle="round,pad=0.06,rounding_size=0.16",
-        linewidth=1.3,
-        linestyle="--",
-        edgecolor="#1F4E79",
-        facecolor="#F4F8FC",
-        zorder=1,
-    )
-    ax.add_patch(bs_frame)
-    ax.text(0.45, 4.77, "TRẠM GỐC (BS – M anten ULA, f_c = 3.5 GHz, P_max)", fontsize=9.2, fontweight="bold", color="#1F4E79", va="top")
-
-    # Top row: Signal chain
-    draw_box(
-        0.45, 2.80, 1.80, 1.60,
-        "Nguồn dữ liệu",
-        "K luồng độc lập\ns = [s₁, ..., s_K]ᵀ\nE[s sᴴ] = I_K",
-        fc="#FFFFFF", ec="#1F4E79",
-    )
-    draw_box(
-        2.65, 2.80, 2.05, 1.60,
-        "Bộ tạo búp sóng W",
-        "W = [w₁, ..., w_K] ∈ ℂ^(M×K)\nx = Σ w_k s_k\n||W||_F² = P_max",
-        fc="#E3F0FB", ec="#1F4E79",
-    )
-    draw_box(
-        5.05, 2.80, 1.20, 1.60,
-        "Mảng ULA",
-        "M phần tử\nd_a = λ/2\nSector 120°",
-        fc="#FFFFFF", ec="#1F4E79",
-    )
-    draw_box(
-        6.80, 2.80, 2.45, 1.60,
-        "Kênh truyền Rician H",
-        "d_k ∈ [20, 100] m, α = 3.0\nβ_k = β₀ (d_k / d₀)^(-α)\nh_k = √β_k (LoS + NLoS)",
-        fc="#FFF6E5", ec="#D97706", title_color="#92400E",
-    )
-    draw_box(
-        9.75, 2.80, 2.40, 1.60,
-        "K Người dùng (UE)",
-        "y_k = h_kᴴ w_k s_k + MUI + n_k\nn_k ~ CN(0, σ² = -94 dBm)\nSINR_k → R_sum = Σ log₂(1+SINR_k)",
-        fc="#EAF7EE", ec="#2E7D32", title_color="#1B5E20",
-    )
-
-    draw_arrow(2.25, 3.60, 2.65, 3.60, "s", 2.45, 3.84)
-    draw_arrow(4.70, 3.60, 5.05, 3.60, "x", 4.88, 3.84)
-    draw_arrow(6.25, 3.60, 6.80, 3.60, "Phát", 6.53, 3.86)
-    draw_arrow(9.25, 3.60, 9.75, 3.60, "Hᴴx", 9.50, 3.84)
-
-    # Bottom row: Evolutionary Optimization Engine
-    opt_frame = patches.FancyBboxPatch(
-        (1.65, 0.25),
-        8.65,
-        1.80,
-        boxstyle="round,pad=0.06,rounding_size=0.16",
-        linewidth=1.5,
-        edgecolor="#9B1C1C",
-        facecolor="#FDF2F2",
-        zorder=1,
-    )
-    ax.add_patch(opt_frame)
-    ax.text(1.85, 1.94, "KHỐI TỐI ƯU HÓA BEAMFORMING (HEURISTIC / TIẾN HÓA & ĐỐI CHIẾU)", fontsize=9.2, fontweight="bold", color="#9B1C1C", va="top")
-
-    draw_box(
-        1.90, 0.42, 2.45, 1.22,
-        "1. Mã hóa nghiệm",
-        "• Direct: x ∈ [-1, 1]^(2MK)\n• Struct: z ∈ [-0.05, 1]^(2K)\n  (đối ngẫu p, λ độc lập M)",
-        fc="#FFFFFF", ec="#B91C1C", title_color="#9B1C1C",
-    )
-    draw_box(
-        4.75, 0.42, 2.55, 1.22,
-        "2. Tiến hóa / Bầy đàn",
-        "DE (dither F, CR=0.85)\nPSO (w: 0.9→0.4) | GA (BLX-α)\nChiếu công suất ||W||_F² = P_max",
-        fc="#FFFFFF", ec="#B91C1C", title_color="#9B1C1C",
-    )
-    draw_box(
-        7.70, 0.42, 2.35, 1.22,
-        "3. Đánh giá & Chọn lọc",
-        "Vector hóa NumPy / Gram O(K³)\nmax R_sum(W) qua T_max vòng\nTham chiếu: MRT, ZF, RZF, WMMSE",
-        fc="#FFFFFF", ec="#B91C1C", title_color="#9B1C1C",
-    )
-
-    draw_arrow(4.35, 1.03, 4.75, 1.03, color="#9B1C1C")
-    draw_arrow(7.30, 1.03, 7.70, 1.03, color="#9B1C1C")
-
-    # Feedback CSI H from Channel straight down to Optimizer, and optimal W* straight up to Beamformer
-    ax.annotate(
-        "",
-        xy=(8.02, 2.11),
-        xytext=(8.02, 2.74),
-        arrowprops=dict(arrowstyle="-|>,head_length=0.55,head_width=0.32", lw=1.8, color="#B45309"),
-        zorder=5,
-    )
-    ax.text(8.18, 2.42, "CSI hoàn hảo H", ha="left", va="center", fontsize=8.7, fontweight="bold", color="#B45309")
-
-    ax.annotate(
-        "",
-        xy=(3.68, 2.74),
-        xytext=(3.68, 2.11),
-        arrowprops=dict(arrowstyle="-|>,head_length=0.55,head_width=0.32", lw=1.8, color="#9B1C1C"),
-        zorder=5,
-    )
-    ax.text(3.84, 2.38, "Nghiệm tối ưu W*", ha="left", va="center", fontsize=8.7, fontweight="bold", color="#9B1C1C")
-
-    fig.suptitle(
-        f"Sơ đồ kiến trúc hệ thống MU-MISO đường xuống và vòng lặp tối ưu Beamforming (M={s.default_m}, K={s.default_k})",
-        fontsize=11.5,
-        fontweight="bold",
-        color="#0F2942",
-        y=0.98,
-    )
-    fig.tight_layout(rect=[0, 0, 1, 0.94])
-    _save_fig(fig, "sodo1_system_architecture", fig_dir, cfg)
 
 
 def plot_all_figures(
@@ -581,7 +588,7 @@ def plot_all_figures(
     """Regenerate every figure in the report from saved .npz/.csv artifacts."""
     _configure_matplotlib()
     ensure_dirs(fig_dir)
-    print(f"[BTL2] Generating 300-DPI IEEE figures into: {fig_dir}")
+    print(f"[BTL2-GA] Generating 300-DPI IEEE figures into: {fig_dir}")
     plot_system_architecture_diagram(fig_dir, cfg)
     plot_exp1_geometry_and_beampattern(data_dir, fig_dir, cfg)
     plot_exp2_power_sweep(data_dir, fig_dir, cfg)
@@ -589,7 +596,7 @@ def plot_all_figures(
     plot_exp4_user_sweep(data_dir, fig_dir, cfg)
     plot_exp5_rician_k_sweep(data_dir, fig_dir, cfg)
     plot_exp6_convergence_and_stability(data_dir, fig_dir, cfg)
-    print("[BTL2] All figures generated successfully.")
+    print("[BTL2-GA] All 8 figures generated successfully.")
 
 
 if __name__ == "__main__":
